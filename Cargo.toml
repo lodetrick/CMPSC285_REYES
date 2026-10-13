@@ -1,0 +1,25 @@
+[package]
+name = "reyes"
+version = "0.1.0"
+edition = "2021"
+description = "ECE/CS 285 HW1: a REYES renderer in Rust, driven by the C++ scene files"
+build = "build.rs"
+
+[[bin]]
+name = "reyes"
+path = "src/main.rs"
+
+[dependencies]
+# The Rust counterpart of stb_image and stb_image_write: reads textures
+# (PNG, JPEG, BMP) and writes the images (PNG, BMP, TGA, JPEG). writeImage()
+# in src/ri.rs already uses it; RiMakeTexture() will.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tga"] }
+
+[build-dependencies]
+# build.rs compiles the C++ scene files with it.
+cc = "1"
+
+[profile.dev]
+# A renderer is painfully slow unoptimized, so even debug builds optimize a
+# little. Use --release for the final images.
+opt-level = 1

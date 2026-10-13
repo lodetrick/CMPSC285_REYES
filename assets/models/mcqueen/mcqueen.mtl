@@ -1,0 +1,24 @@
+newmtl body
+Kd 0.8 0.8 0.8
+Ks 0.8 0.8 0.8
+Ns 25
+map_Kd McQueenLivery.jpg
+
+newmtl eyes
+Kd 0.8 0.8 0.8
+Ks 0.8 0.8 0.8
+Ns 25
+map_Kd Eyes_McQueen_Eyes.jpg
+
+newmtl glass
+Kd 0.8 0.8 0.8
+Ks 0.8 0.8 0.8
+Ns 25
+d 0.4
+
+newmtl tires
+Kd 0.8 0.8 0.8
+Ks 0.8 0.8 0.8
+Ns 25
+map_Kd McQ_Tires.png
+
