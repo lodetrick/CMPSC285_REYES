@@ -35,6 +35,8 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
+use nalgebra::{Affine3, Point3, UnitVector3, Vector3, matrix};
+
 /* ------------------------------------------------------------------ types */
 
 pub type RtVoid = ();
@@ -43,14 +45,10 @@ pub type RtInt = i32;
 pub type RtToken = *const c_char;
 pub type RtPointer = *mut c_void;
 pub type RtColor = [RtFloat; 3];
-pub type RtPoint = [RtFloat; 3];
-pub type RtVector = [RtFloat; 3];
-pub type RtNormal = [RtFloat; 3];
-
-#[derive(Copy, Clone)]
-pub struct RtMatrix {
-    o: [[RtFloat; 4]; 4]
-}
+pub type RtPoint = Point3<RtFloat>;
+pub type RtVector = Vector3<RtFloat>;
+pub type RtNormal = UnitVector3<RtFloat>;
+pub type RtMatrix = Affine3<RtFloat>;
 
 pub const RI_PERSPECTIVE: &str = "perspective";
 pub const RI_ORTHOGRAPHIC: &str = "orthographic";
@@ -79,19 +77,15 @@ pub struct RtShaderContext {
 /// (RiSurface(NULL, NULL, 0) means STANDARD).
 pub type RtShaderFn = Option<unsafe extern "C" fn(*mut RtShaderContext)>;
 
-/* --------------------------------------------------------- type implementations */
+/* --------------------------------------------------------- type helpers */
 
-impl RtMatrix {
-    const fn identity() -> Self {
-        RtMatrix {
-            o: [
-                [1.,0.,0.,0.],
-                [0.,1.,0.,0.],
-                [0.,0.,1.,0.],
-                [0.,0.,0.,1.],
-               ]
-        }
-    }
+const fn RtMatrix_identity() -> RtMatrix {
+    Affine3::from_matrix_unchecked(matrix![1.,0.,0.,0.;0.,1.,0.,0.;0.,0.,1.,0.;0.,0.,0.,1.;])
+}
+
+unsafe fn RtMatrix_from_ptr(transform: *const [[RtFloat; 4]; 4]) -> RtMatrix {
+    let concat_mat = nalgebra::Matrix4::from_array_storage(nalgebra::ArrayStorage(*transform));
+    RtMatrix::from_matrix_unchecked(concat_mat)
 }
 
 /* --------------------------------------------------------- renderer state */
@@ -117,7 +111,7 @@ static OPTIONS: Mutex<Options> = Mutex::new(Options {
     ysamples: 2,
     display: String::new(),
     depth_display: false,
-    transformation_curr: RtMatrix::identity(),
+    transformation_curr: RtMatrix_identity(),
     transformation_stack: Vec::new(),
 });
 
@@ -147,7 +141,7 @@ pub extern "C" fn RiBegin(_name: RtToken) {
     o.ysamples = 2;
     o.display = String::new();
     o.depth_display = false;
-    o.transformation_curr = RtMatrix::identity();
+    o.transformation_curr = RtMatrix_identity();
     o.transformation_stack = Vec::new();
 }
 
@@ -246,29 +240,53 @@ pub extern "C" fn RiTransformEnd() {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RiConcatTransform(transform: *const [RtFloat; 4]) {
-    let _ = transform;
+pub unsafe extern "C" fn RiConcatTransform(transform: *const [[RtFloat; 4]; 4]) {
+    let mut o = OPTIONS.lock().unwrap();
+    let concat_transform = RtMatrix_from_ptr(transform);
+
+    o.transformation_curr *= concat_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiTranslate(dx: RtFloat, dy: RtFloat, dz: RtFloat) {
-    let _ = (dx, dy, dz);
+    let mut o = OPTIONS.lock().unwrap();
+    let translate_transform = RtMatrix::from_matrix_unchecked(matrix![
+            1.,0.,0.,0.;
+            0.,1.,0.,0.;
+            0.,0.,1.,0.;
+            dx,dy,dz,1.;
+    ]);
+
+    o.transformation_curr *= translate_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiRotate(angle: RtFloat, dx: RtFloat, dy: RtFloat, dz: RtFloat) {
-    let _ = (angle, dx, dy, dz);
+    // TODO: Rotate around vector with angle
+
+
+    // let mut o = OPTIONS.lock().unwrap();
+    // let rotate_transform = RtMatrix::from_matrix_unchecked(matrix![
+    //         sx,0.,0.,0.;
+    //         0.,sy,0.,0.;
+    //         0.,0.,sz,0.;
+    //         0.,0.,0.,1.;
+    // ]);
+
+    // o.transformation_curr *= rotate_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiScale(sx: RtFloat, sy: RtFloat, sz: RtFloat) {
-    let _ = (sx, sy, sz);
-    // [
-    //     [],
-    //     [],
-    //     [],
-    //     [],
-    // ]
+    let mut o = OPTIONS.lock().unwrap();
+    let scale_transform = RtMatrix::from_matrix_unchecked(matrix![
+            sx,0.,0.,0.;
+            0.,sy,0.,0.;
+            0.,0.,sz,0.;
+            0.,0.,0.,1.;
+    ]);
+
+    o.transformation_curr *= scale_transform
 }
 
 /* ---------------------------------------------------------------- primitives */
