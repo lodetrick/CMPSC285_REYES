@@ -95,20 +95,42 @@ struct Options {
     ysamples: i32,
     display: String,
     depth_display: bool, /* RiDisplay(name, "zfile", "z") */
+}
+
+impl Options {
+    const fn default() -> Self {
+        Options {
+            xres: 640,
+            yres: 480,
+            xsamples: 2,
+            ysamples: 2,
+            display: String::new(),
+            depth_display: false,
+        }
+    }
+}
+
+static OPTIONS: Mutex<Options> = Mutex::new(Options::default());
+
+struct GraphicsState {
+    color: RtColor,
+    opacity: RtColor,
     transformation_curr: RtMatrix,
     transformation_stack: Vec<RtMatrix>,
 }
 
-static OPTIONS: Mutex<Options> = Mutex::new(Options {
-    xres: 640,
-    yres: 480,
-    xsamples: 2,
-    ysamples: 2,
-    display: String::new(),
-    depth_display: false,
-    transformation_curr: RtMatrix::IDENTITY,
-    transformation_stack: Vec::new(),
-});
+impl GraphicsState {
+    const fn default() -> Self {
+        GraphicsState {
+            color: [1.,1.,1.],
+            opacity: [1.,1.,1.],
+            transformation_curr: RtMatrix::IDENTITY,
+            transformation_stack: Vec::new(),
+        }
+    }
+}
+
+static G_STATE: Mutex<GraphicsState> = Mutex::new(GraphicsState::default());
 
 /// A C string argument as a Rust &str ("" for a null pointer).
 unsafe fn token(s: *const c_char) -> &'static str {
@@ -130,14 +152,10 @@ unsafe fn token(s: *const c_char) -> &'static str {
 #[no_mangle]
 pub extern "C" fn RiBegin(_name: RtToken) {
     let mut o = OPTIONS.lock().unwrap();
-    o.xres = 640;
-    o.yres = 480;
-    o.xsamples = 2;
-    o.ysamples = 2;
-    o.display = String::new();
-    o.depth_display = false;
-    o.transformation_curr = RtMatrix::IDENTITY;
-    o.transformation_stack = Vec::new();
+    *o = Options::default();
+
+    let mut o = G_STATE.lock().unwrap();
+    *o = GraphicsState::default();
 }
 
 #[no_mangle]
@@ -222,42 +240,42 @@ pub unsafe extern "C" fn RiProjection(name: RtToken, token: RtToken, value: RtPo
 /// pointer to four rows of four floats. Angles are degrees (Section 2).
 #[no_mangle]
 pub extern "C" fn RiTransformBegin() {
-    let mut o = OPTIONS.lock().unwrap();
+    let mut o = G_STATE.lock().unwrap();
     let transformation_curr = o.transformation_curr.clone();
     o.transformation_stack.push(transformation_curr);
 }
 
 #[no_mangle]
 pub extern "C" fn RiTransformEnd() {
-    let mut o = OPTIONS.lock().unwrap();
+    let mut o = G_STATE.lock().unwrap();
     let transformation = o.transformation_stack.pop().unwrap();
     o.transformation_curr = transformation;
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RiConcatTransform(transform: *const [[RtFloat; 4]; 4]) {
-    let mut o = OPTIONS.lock().unwrap();
+    let mut o = G_STATE.lock().unwrap();
     let concat_transform = RtMatrix_from_ptr(transform);
     o.transformation_curr *= concat_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiTranslate(dx: RtFloat, dy: RtFloat, dz: RtFloat) {
-    let mut o = OPTIONS.lock().unwrap();
+    let mut o = G_STATE.lock().unwrap();
     let translate_transform = Affine3::from_translation(Vec3::new(dx, dy, dz));
     o.transformation_curr *= translate_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiRotate(theta: RtFloat, dx: RtFloat, dy: RtFloat, dz: RtFloat) {
-    let mut o = OPTIONS.lock().unwrap();
+    let mut o = G_STATE.lock().unwrap();
     let rotate_transform = Affine3::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta);
     o.transformation_curr *= rotate_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiScale(sx: RtFloat, sy: RtFloat, sz: RtFloat) {
-    let mut o = OPTIONS.lock().unwrap();
+    let mut o = G_STATE.lock().unwrap();
     let scale_transform = Affine3::from_scale(Vec3::new(sx, sy, sz));
     o.transformation_curr *= scale_transform
 }
@@ -322,7 +340,7 @@ pub unsafe extern "C" fn RiPointsPolygons(
 /// them). The color and opacity become Cs and Os in the shader context.
 /// An RtColor argument arrives as a pointer to its three floats.
 #[no_mangle]
-pub unsafe extern "C" fn RiColor(color: *const RtFloat) {
+pub unsafe extern "C" fn RiColor(color: *const [RtFloat; 3]) {
     let _ = color;
 }
 
