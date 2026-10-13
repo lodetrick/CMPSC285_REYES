@@ -35,7 +35,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
-use nalgebra::{Affine3, Point3, UnitVector3, Vector3, matrix};
+use glam::{Affine3, Vec3};
 
 /* ------------------------------------------------------------------ types */
 
@@ -45,10 +45,10 @@ pub type RtInt = i32;
 pub type RtToken = *const c_char;
 pub type RtPointer = *mut c_void;
 pub type RtColor = [RtFloat; 3];
-pub type RtPoint = Point3<RtFloat>;
-pub type RtVector = Vector3<RtFloat>;
-pub type RtNormal = UnitVector3<RtFloat>;
-pub type RtMatrix = Affine3<RtFloat>;
+pub type RtPoint = Vec3;
+pub type RtVector = Vec3;
+pub type RtNormal = Vec3;
+pub type RtMatrix = Affine3;
 
 pub const RI_PERSPECTIVE: &str = "perspective";
 pub const RI_ORTHOGRAPHIC: &str = "orthographic";
@@ -79,13 +79,8 @@ pub type RtShaderFn = Option<unsafe extern "C" fn(*mut RtShaderContext)>;
 
 /* --------------------------------------------------------- type helpers */
 
-const fn RtMatrix_identity() -> RtMatrix {
-    Affine3::from_matrix_unchecked(matrix![1.,0.,0.,0.;0.,1.,0.,0.;0.,0.,1.,0.;0.,0.,0.,1.;])
-}
-
 unsafe fn RtMatrix_from_ptr(transform: *const [[RtFloat; 4]; 4]) -> RtMatrix {
-    let concat_mat = nalgebra::Matrix4::from_array_storage(nalgebra::ArrayStorage(*transform));
-    RtMatrix::from_matrix_unchecked(concat_mat)
+    RtMatrix::from_mat4(glam::Mat4::from_cols_array_2d(transform.as_ref_unchecked()))
 }
 
 /* --------------------------------------------------------- renderer state */
@@ -111,7 +106,7 @@ static OPTIONS: Mutex<Options> = Mutex::new(Options {
     ysamples: 2,
     display: String::new(),
     depth_display: false,
-    transformation_curr: RtMatrix_identity(),
+    transformation_curr: RtMatrix::IDENTITY,
     transformation_stack: Vec::new(),
 });
 
@@ -141,7 +136,7 @@ pub extern "C" fn RiBegin(_name: RtToken) {
     o.ysamples = 2;
     o.display = String::new();
     o.depth_display = false;
-    o.transformation_curr = RtMatrix_identity();
+    o.transformation_curr = RtMatrix::IDENTITY;
     o.transformation_stack = Vec::new();
 }
 
@@ -243,49 +238,27 @@ pub extern "C" fn RiTransformEnd() {
 pub unsafe extern "C" fn RiConcatTransform(transform: *const [[RtFloat; 4]; 4]) {
     let mut o = OPTIONS.lock().unwrap();
     let concat_transform = RtMatrix_from_ptr(transform);
-
     o.transformation_curr *= concat_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiTranslate(dx: RtFloat, dy: RtFloat, dz: RtFloat) {
     let mut o = OPTIONS.lock().unwrap();
-    let translate_transform = RtMatrix::from_matrix_unchecked(matrix![
-            1.,0.,0.,0.;
-            0.,1.,0.,0.;
-            0.,0.,1.,0.;
-            dx,dy,dz,1.;
-    ]);
-
+    let translate_transform = Affine3::from_translation(Vec3::new(dx, dy, dz));
     o.transformation_curr *= translate_transform
 }
 
 #[no_mangle]
-pub extern "C" fn RiRotate(angle: RtFloat, dx: RtFloat, dy: RtFloat, dz: RtFloat) {
-    // TODO: Rotate around vector with angle
-
-
-    // let mut o = OPTIONS.lock().unwrap();
-    // let rotate_transform = RtMatrix::from_matrix_unchecked(matrix![
-    //         sx,0.,0.,0.;
-    //         0.,sy,0.,0.;
-    //         0.,0.,sz,0.;
-    //         0.,0.,0.,1.;
-    // ]);
-
-    // o.transformation_curr *= rotate_transform
+pub extern "C" fn RiRotate(theta: RtFloat, dx: RtFloat, dy: RtFloat, dz: RtFloat) {
+    let mut o = OPTIONS.lock().unwrap();
+    let rotate_transform = Affine3::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta);
+    o.transformation_curr *= rotate_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiScale(sx: RtFloat, sy: RtFloat, sz: RtFloat) {
     let mut o = OPTIONS.lock().unwrap();
-    let scale_transform = RtMatrix::from_matrix_unchecked(matrix![
-            sx,0.,0.,0.;
-            0.,sy,0.,0.;
-            0.,0.,sz,0.;
-            0.,0.,0.,1.;
-    ]);
-
+    let scale_transform = Affine3::from_scale(Vec3::new(sx, sy, sz));
     o.transformation_curr *= scale_transform
 }
 
