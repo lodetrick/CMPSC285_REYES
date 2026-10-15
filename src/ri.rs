@@ -280,6 +280,11 @@ pub extern "C" fn RiScale(sx: RtFloat, sy: RtFloat, sz: RtFloat) {
     o.transformation_curr *= scale_transform
 }
 
+pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
+    let o = G_STATE.lock().unwrap();
+    o.transformation_curr.transform_point3(Vec3::new(px, py, pz))
+}
+
 /* ---------------------------------------------------------------- primitives */
 
 /// Each primitive goes through the REYES pipeline as soon as it is called:

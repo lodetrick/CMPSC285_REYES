@@ -14,6 +14,7 @@
 
 mod ri;
 mod shaders;
+mod tests;
 
 use std::ffi::{c_char, CStr};
 use std::path::Path;
