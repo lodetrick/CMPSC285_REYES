@@ -124,6 +124,7 @@ struct GraphicsState {
     opacity: RtColor,
     transformation_curr: RtMatrix,
     transformation_stack: Vec<RtMatrix>,
+    camera_transform: RtMatrix,
 }
 
 impl GraphicsState {
@@ -133,7 +134,25 @@ impl GraphicsState {
             opacity: [1.,1.,1.],
             transformation_curr: RtMatrix::IDENTITY,
             transformation_stack: Vec::new(),
+            camera_transform: RtMatrix::IDENTITY,
         }
+    }
+
+    fn world_to_view(&self) -> Affine3 {
+        Affine3::from_translation(-self.camera_transform.translation)
+    }
+
+    fn view_to_ndc(&self) -> Affine3 {
+        let (l, r) = (-10., 10.);
+        let (t, b) = (-10., 10.);
+        let (n, f) = (0., 1000.);
+
+        Affine3::from_cols_array_2d(&[
+            [2. / (r - l),0.,0.], 
+            [0.,2. / (t - b),0.], 
+            [0.,0.,-2. / (f - n)], 
+            [-((r + l) / (r - l)),-((t + b) / (t - b)),-((f + n) / (f - n))],
+        ])
     }
 }
 
