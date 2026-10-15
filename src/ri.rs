@@ -58,6 +58,67 @@ enum Projection {
     Perspective {fov: f32}
 }
 
+#[derive(Clone)]
+struct Vertex {
+    p: Vec3,
+}
+
+impl Vertex {
+    fn new(p: Vec3) -> Self {
+        Vertex {
+            p,
+        }
+    }
+}
+
+struct MicroGrid {
+    vertices: Vec<Vertex>,
+    w: usize,
+    h: usize
+}
+
+impl MicroGrid {
+    fn new(w: usize, h: usize) -> Self {
+        MicroGrid {
+            vertices: vec![Vertex::new(Vec3::ZERO); (w + 1) * (h + 1)],
+            w,
+            h,
+        }
+    }
+
+    fn get_vertex(&self, x: usize, y: usize) -> &Vertex {
+        &self.vertices[x + y * (self.h + 1)]
+    }
+
+    fn get_vertex_mut(&mut self, x: usize, y: usize) -> &mut Vertex {
+        &mut self.vertices[x + y * (self.h + 1)]
+    }
+
+    fn sample(&self, g: &GraphicsState, o: &Options) {
+        let mut s = SCREEN_BUF.lock().unwrap();
+        let object_to_ndc = g.transformation_curr * g.world_to_view() * g.view_to_ndc(&o);
+        let (w, h) = (o.xres as f32, o.yres as f32);
+
+        for u in 0..=self.w {
+            for v in 0..=self.h {
+                let vertex: &Vertex = self.get_vertex(u, v);
+
+                let xyz = object_to_ndc.transform_point3(vertex.p);
+                let (x, y) = ((xyz.x + 1.) / 2., (xyz.y + 1.) / 2.);
+            
+                if 0. > x || x >= 1. { continue; }
+                if 0. > y || y >= 1. { continue; }
+            
+                let index = 4 * (((x * w) + ((y * h).floor() * w)) as usize);
+                s[index] = 1.;
+                s[index + 1] = 1.;
+                s[index + 2] = 1.;
+                s[index + 3] = 1.;
+            }
+        }
+    } 
+}
+
 /// What a shader sees at one grid vertex (Ri.h's RtShaderContext, same
 /// layout). The renderer fills in the inputs; a displacement shader moves
 /// P, a surface shader writes Ci and Oi.
@@ -357,10 +418,6 @@ pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
 pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetamax: RtFloat) {
     let g = G_STATE.lock().unwrap();
     let o = OPTIONS.lock().unwrap();
-    let object_to_ndc = g.transformation_curr * g.world_to_view() * g.view_to_ndc(&o);
-
-    let mut s = SCREEN_BUF.lock().unwrap();
-    let (w, h) = (o.xres as f32, o.yres as f32);
 
     let (phi_min, phi_max, theta_max) = (
         if zmin > -radius {f32::asin(zmin / radius)} else {f32::to_radians(-90.0)},
@@ -368,12 +425,14 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
         thetamax.to_radians()
     );
 
-    let (umax, vmax) = (20, 30);
+    let (umax, vmax) = (50, 30);
 
-    for u in 0..umax {
-        for v in 0..vmax {
-            let (u, v) = (u as f32 / umax as f32, v as f32 / vmax as f32);
-            
+    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
+
+    for _u in 0..=umax {
+        for _v in 0..=vmax {    
+            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
+
             let (phi, theta) = (
                 phi_min + v * (phi_max - phi_min),
                 u * theta_max
@@ -382,22 +441,15 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
             let (x, y, z) = (
                 radius * theta.cos() * phi.cos(),
                 radius * theta.sin() * phi.cos(),
-                radius * phi.sin()
+                radius * phi.sin(),
             );
 
-            let xyz = object_to_ndc.transform_point3(Vec3::new(x, y, z));
-            let (x, y) = ((xyz.x + 1.) / 2., (xyz.y + 1.) / 2.);
-
-            if 0. > x || x >= 1. { continue; }
-            if 0. > y || y >= 1. { continue; }
-
-            let index = 4 * (((x * w) + ((y * h).floor() * w)) as usize);
-            s[index] = u;
-            s[index + 1] = v;
-            s[index + 2] = 0.;
-            s[index + 3] = 1.;
+            let vert = grid.get_vertex_mut(_u, _v);
+            vert.p = Vec3::new(x, y, z);
         }
     }
+
+    grid.sample(&g, &o);
 }
 
 #[no_mangle]
