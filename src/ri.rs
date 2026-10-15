@@ -182,7 +182,7 @@ static OPTIONS: Mutex<Options> = Mutex::new(Options::default());
 
 struct GraphicsState {
     color: RtColor,
-    opacity: RtColor,
+    opacity: RtFloat,
     transformation_curr: RtMatrix,
     transformation_stack: Vec<RtMatrix>,
     camera_transform: RtMatrix,
@@ -192,7 +192,7 @@ impl GraphicsState {
     const fn default() -> Self {
         GraphicsState {
             color: [1.,1.,1.],
-            opacity: [1.,1.,1.],
+            opacity: 1.,
             transformation_curr: RtMatrix::IDENTITY,
             transformation_stack: Vec::new(),
             camera_transform: RtMatrix::IDENTITY,
@@ -494,12 +494,14 @@ pub unsafe extern "C" fn RiPointsPolygons(
 /// An RtColor argument arrives as a pointer to its three floats.
 #[no_mangle]
 pub unsafe extern "C" fn RiColor(color: *const [RtFloat; 3]) {
-    let _ = color;
+    let mut g = G_STATE.lock().unwrap();
+    g.color = (*color).clone();
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RiOpacity(opacity: *const RtFloat) {
-    let _ = opacity;
+    let mut g = G_STATE.lock().unwrap();
+    g.opacity = *opacity;
 }
 
 /// Bind a shader to the primitives that follow. Copy nbytes of params now
