@@ -53,6 +53,11 @@ pub type RtMatrix = Affine3;
 pub const RI_PERSPECTIVE: &str = "perspective";
 pub const RI_ORTHOGRAPHIC: &str = "orthographic";
 
+enum Projection {
+    Orthographic,
+    Perspective {fov: f32}
+}
+
 /// What a shader sees at one grid vertex (Ri.h's RtShaderContext, same
 /// layout). The renderer fills in the inputs; a displacement shader moves
 /// P, a surface shader writes Ci and Oi.
@@ -95,6 +100,7 @@ struct Options {
     ysamples: i32,
     display: String,
     depth_display: bool, /* RiDisplay(name, "zfile", "z") */
+    projection: Projection
 }
 
 impl Options {
@@ -106,6 +112,7 @@ impl Options {
             ysamples: 2,
             display: String::new(),
             depth_display: false,
+            projection: Projection::Orthographic
         }
     }
 }
@@ -225,8 +232,19 @@ pub extern "C" fn RiWorldEnd() {
 /// also resets the current transformation to the identity: the camera
 /// transform is built after it (Section 2). value points at an RtFloat.
 #[no_mangle]
-pub unsafe extern "C" fn RiProjection(name: RtToken, token: RtToken, value: RtPointer) {
-    let (_name, _token, _value) = (name, token, value);
+pub unsafe extern "C" fn RiProjection(p_name: RtToken, p_token: RtToken, p_value: RtPointer) {
+    let mut o = OPTIONS.lock().unwrap();
+    match token(p_name) {
+        RI_PERSPECTIVE => {
+            o.projection = Projection::Perspective { fov: *(p_value as *const f32) }
+        }
+        RI_ORTHOGRAPHIC => { o.projection = Projection::Orthographic; }
+        err => panic!("Invalid Projection: {err}")
+    };
+    
+    let mut g = G_STATE.lock().unwrap();
+    g.transformation_curr = RtMatrix::IDENTITY;
+    g.transformation_stack.clear();
 }
 
 /* ----------------------------------------------------------- transformations */
@@ -269,7 +287,7 @@ pub extern "C" fn RiTranslate(dx: RtFloat, dy: RtFloat, dz: RtFloat) {
 #[no_mangle]
 pub extern "C" fn RiRotate(theta: RtFloat, dx: RtFloat, dy: RtFloat, dz: RtFloat) {
     let mut o = G_STATE.lock().unwrap();
-    let rotate_transform = Affine3::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta);
+    let rotate_transform = Affine3::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta.to_radians());
     o.transformation_curr *= rotate_transform
 }
 
