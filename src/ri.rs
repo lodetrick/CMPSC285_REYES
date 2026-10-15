@@ -142,10 +142,11 @@ impl GraphicsState {
         Affine3::from_translation(-self.camera_transform.translation)
     }
 
-    fn view_to_ndc(&self) -> Affine3 {
-        let (l, r) = (-10., 10.);
-        let (t, b) = (-10., 10.);
-        let (n, f) = (0., 1000.);
+    fn view_to_ndc(&self, o: &Options) -> Affine3 {
+        let a = o.xres as f32 / o.yres as f32;
+        let (l, r) = if a >= 1. { (-a, a) } else { (-1.,1.) };
+        let (t, b) = if a >= 1. { (-1., 1.) } else { (-1. / a, 1. / a) };
+        let (n, f) = (0., 20.);
 
         Affine3::from_cols_array_2d(&[
             [2. / (r - l),0.,0.], 
@@ -166,6 +167,9 @@ unsafe fn token(s: *const c_char) -> &'static str {
         CStr::from_ptr(s).to_str().unwrap_or("")
     }
 }
+
+static DEPTH_BUF: Mutex<Vec<RtFloat>> = Mutex::new(Vec::new());
+static SCREEN_BUF: Mutex<Vec<RtFloat>> = Mutex::new(Vec::new());
 
 /* ---------------------------------------------------------- graphics state */
 
@@ -228,7 +232,20 @@ pub extern "C" fn RiFrameEnd() {}
 /// the sample buffer. RiWorldEnd: all primitives have been drawn, so filter
 /// the samples into pixels and write the image (Sections 2 and 4).
 #[no_mangle]
-pub extern "C" fn RiWorldBegin() {}
+pub extern "C" fn RiWorldBegin() {
+    let mut g = G_STATE.lock().unwrap();
+    g.camera_transform = g.transformation_curr.clone();
+    g.transformation_curr = RtMatrix::IDENTITY;
+    g.transformation_stack.clear();
+
+    let (w, h) = {
+        let o = OPTIONS.lock().unwrap();
+        (o.xres as usize, o.yres as usize)
+    };
+
+    *DEPTH_BUF.lock().unwrap() = vec![f32::INFINITY; w * h];
+    *SCREEN_BUF.lock().unwrap() = vec![0.0f32; w * h * 4];
+}
 
 #[no_mangle]
 pub extern "C" fn RiWorldEnd() {
@@ -239,9 +256,9 @@ pub extern "C" fn RiWorldEnd() {
         (o.xres as usize, o.yres as usize, o.depth_display)
     };
     if depth {
-        write_depth(&vec![f32::INFINITY; w * h]);
+        write_depth(&DEPTH_BUF.lock().unwrap());
     } else {
-        write_image(&vec![0.0f32; w * h * 4]);
+        write_image(&SCREEN_BUF.lock().unwrap());
     }
 }
 
@@ -338,7 +355,49 @@ pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
 /// needs the neighbors, which is why it waits for the whole first pass.
 #[no_mangle]
 pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetamax: RtFloat) {
-    let _ = (radius, zmin, zmax, thetamax);
+    let g = G_STATE.lock().unwrap();
+    let o = OPTIONS.lock().unwrap();
+    let object_to_ndc = g.transformation_curr * g.world_to_view() * g.view_to_ndc(&o);
+
+    let mut s = SCREEN_BUF.lock().unwrap();
+    let (w, h) = (o.xres as f32, o.yres as f32);
+
+    let (phi_min, phi_max, theta_max) = (
+        if zmin > -radius {f32::asin(zmin / radius)} else {f32::to_radians(-90.0)},
+        if zmax < radius {f32::asin(zmax / radius)} else {f32::to_radians(90.0)},
+        thetamax.to_radians()
+    );
+
+    let (umax, vmax) = (20, 30);
+
+    for u in 0..umax {
+        for v in 0..vmax {
+            let (u, v) = (u as f32 / umax as f32, v as f32 / vmax as f32);
+            
+            let (phi, theta) = (
+                phi_min + v * (phi_max - phi_min),
+                u * theta_max
+            );
+        
+            let (x, y, z) = (
+                radius * theta.cos() * phi.cos(),
+                radius * theta.sin() * phi.cos(),
+                radius * phi.sin()
+            );
+
+            let xyz = object_to_ndc.transform_point3(Vec3::new(x, y, z));
+            let (x, y) = ((xyz.x + 1.) / 2., (xyz.y + 1.) / 2.);
+
+            if 0. > x || x >= 1. { continue; }
+            if 0. > y || y >= 1. { continue; }
+
+            let index = 4 * (((x * w) + ((y * h).floor() * w)) as usize);
+            s[index] = u;
+            s[index + 1] = v;
+            s[index + 2] = 0.;
+            s[index + 3] = 1.;
+        }
+    }
 }
 
 #[no_mangle]
