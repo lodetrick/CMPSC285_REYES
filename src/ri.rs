@@ -35,7 +35,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
-use glam::{Mat4, Vec3, Vec4Swizzles};
+use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
 
 /* ------------------------------------------------------------------ types */
 
@@ -73,6 +73,83 @@ impl Vertex {
     }
 }
 
+struct Triangle<'a> {
+    v1: &'a Vertex,
+    v2: &'a Vertex,
+    v3: &'a Vertex,
+}
+
+impl<'a> Triangle<'a> {
+    fn new(v1: &'a Vertex, v2: &'a Vertex, v3: &'a Vertex) -> Self {
+        Triangle {
+            v1,
+            v2,
+            v3,
+        }
+    }
+
+    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Vec<f32>, w: f32, h: f32) {
+        // Transform object coordinates to NDC coordinates
+        let (p1, p2, p3) = (
+            object_to_screen.mul_vec4(self.v1.p.extend(1.)),
+            object_to_screen.mul_vec4(self.v2.p.extend(1.)),
+            object_to_screen.mul_vec4(self.v3.p.extend(1.)),
+        );
+
+        // Normalize by w if it is non-zero
+        let (p1, p2, p3) = (
+            p1.xyz() / p1.w,
+            p2.xyz() / p2.w,
+            p3.xyz() / p3.w,
+        );
+        
+        let (r1, r2, r3) = (
+            Vec2::new((p1.x + 1.) * 0.5 * w, (1. - p1.y) * 0.5 * h),
+            Vec2::new((p2.x + 1.) * 0.5 * w, (1. - p2.y) * 0.5 * h),
+            Vec2::new((p3.x + 1.) * 0.5 * w, (1. - p3.y) * 0.5 * h),
+        );
+
+        // check if in bounds
+        let (x_min, x_max, y_min, y_max) = (
+            r1.x.min(r2.x.min(r3.x)),
+            r1.x.max(r2.x.max(r3.x)),
+            r1.y.min(r2.y.min(r3.y)),
+            r1.y.max(r2.y.max(r3.y)),
+        );
+
+        write_color_to_screen_xy(s, r1.x as usize, r1.y as usize, w as usize, self.v1.c);
+        // Don't render tris outside of the screen.
+        if x_max < 0. || x_min > w || y_max < 0. || y_min > h { return; }
+
+        let (x_min, x_max, y_min, y_max) = (
+            x_min.floor().max(0.0) as usize,
+            x_max.floor().min(w) as usize,
+            y_min.floor().max(0.0) as usize,
+            y_max.floor().max(h) as usize,
+        );
+
+        for i in x_min..x_max {
+            for j in y_min..y_max {
+                // if pixel is in the tri, then draw it
+                let r = Vec2::new(i as f32, j as f32);
+
+                let (w1, w2, w3) = (
+                    (r-r3).perp_dot(r2-r3) / (r1-r3).perp_dot(r2-r3),
+                    (r-r3).perp_dot(r3-r1) / (r1-r3).perp_dot(r2-r3),
+                    (r-r1).perp_dot(r1-r2) / (r1-r3).perp_dot(r2-r3),
+                );
+                // println!("{w1} {w2} {w3}");
+
+                if 0. <= w1 && w1 <= 1.
+                && 0. <= w2 && w2 <= 1.
+                && 0. <= w3 && w3 <= 1. {
+                    write_color_to_screen_xy(s, i, j, w as usize, self.v1.c);
+                }
+            }
+        }
+    }
+}
+
 struct MicroGrid {
     vertices: Vec<Vertex>,
     w: usize,
@@ -98,24 +175,23 @@ impl MicroGrid {
 
     fn sample(&self, g: &GraphicsState, o: &Options) {
         let mut s = SCREEN_BUF.lock().unwrap();
-        let object_to_screen = g.transformation_curr * g.world_to_view() * g.view_to_screen(&o);
+        let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
         let (w, h) = (o.xres as f32, o.yres as f32);
 
-        for u in 0..=self.w {
-            for v in 0..=self.h {
-                let vertex: &Vertex = self.get_vertex(u, v);
+        for u in 0..self.w {
+            for v in 0..self.h {
+                let v_tl: &Vertex = self.get_vertex(u, v);
+                let v_tr: &Vertex = self.get_vertex(u + 1, v);
+                let v_bl: &Vertex = self.get_vertex(u, v + 1);
+                let v_br: &Vertex = self.get_vertex(u + 1, v + 1);
 
-                let xyz = object_to_ndc.transform_point3(vertex.p);
-                let (x, y) = ((xyz.x + 1.) / 2., (xyz.y + 1.) / 2.);
-            
-                if 0. > x || x >= 1. { continue; }
-                if 0. > y || y >= 1. { continue; }
-            
-                let index = 4 * (((x * w) + ((y * h).floor() * w)) as usize);
-                s[index] = 1.;
-                s[index + 1] = 1.;
-                s[index + 2] = 1.;
-                s[index + 3] = 1.;
+                let (tri1, tri2) = (
+                    Triangle::new(v_tl, v_tr, v_bl),
+                    Triangle::new(v_bl, v_tr, v_br),
+                );
+
+                tri1.rasterize(object_to_screen, &mut s, w, h);
+                tri2.rasterize(object_to_screen, &mut s, w, h);
             }
         }
     } 
@@ -206,13 +282,13 @@ impl GraphicsState {
     }
 
     fn view_to_screen(&self, o: &Options) -> RtMatrix {
-        let (n, f) = (0., 10000.);
+        let (n, f) = (0.01, 10000.);
+        let aspect = o.xres as f32 / o.yres as f32;
 
         match o.projection {
             Projection::Orthographic => {
-                let a = o.xres as f32 / o.yres as f32;
-                let (l, r) = if a >= 1. { (-a, a) } else { (-1.,1.) };
-                let (t, b) = if a >= 1. { (-1., 1.) } else { (-1. / a, 1. / a) };
+                let (l, r) = if aspect >= 1. { (-aspect, aspect) } else { (-1.,1.) };
+                let (t, b) = if aspect >= 1. { (-1., 1.) } else { (-1. / aspect, 1. / aspect) };
 
                 RtMatrix::from_cols_array_2d(&[
                     [2. / (r - l),0.,0.,0.], 
@@ -223,11 +299,15 @@ impl GraphicsState {
             }
 
             Projection::Perspective { fov } => {
+                let cot = 1. / (fov * 0.5).tan();
+
+                let (sx, sy) = if aspect >= 1. { (cot / aspect, cot) } else { (cot, cot * aspect) };
+
                 RtMatrix::from_cols_array_2d(&[
-                    [1. / (fov / 2.0).tan(),0.,0.,0.],
-                    [0.,1. / (fov / 2.0).tan(),0.,0.],
-                    [0.,0.,f / (f - n),(- f * n / (f - n))],
-                    [0.,0.,1.,0.],
+                    [sx,0.,0.,0.],
+                    [0.,sy,0.,0.],
+                    [0.,0.,f / (f - n),1.],
+                    [0.,0.,(- f * n / (f - n)),0.],
                 ])
             }
         }
