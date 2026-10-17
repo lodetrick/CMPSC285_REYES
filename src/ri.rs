@@ -87,11 +87,11 @@ impl MicroGrid {
     }
 
     fn get_vertex(&self, x: usize, y: usize) -> &Vertex {
-        &self.vertices[x + y * (self.h + 1)]
+        &self.vertices[x + y * (self.w + 1)]
     }
-
+    
     fn get_vertex_mut(&mut self, x: usize, y: usize) -> &mut Vertex {
-        &mut self.vertices[x + y * (self.h + 1)]
+        &mut self.vertices[x + y * (self.w + 1)]
     }
 
     fn sample(&self, g: &GraphicsState, o: &Options) {
