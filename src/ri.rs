@@ -35,7 +35,7 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
-use glam::{Affine3, Vec3};
+use glam::{Mat4, Vec3, Vec4Swizzles};
 
 /* ------------------------------------------------------------------ types */
 
@@ -48,7 +48,7 @@ pub type RtColor = [RtFloat; 3];
 pub type RtPoint = Vec3;
 pub type RtVector = Vec3;
 pub type RtNormal = Vec3;
-pub type RtMatrix = Affine3;
+pub type RtMatrix = Mat4;
 
 pub const RI_PERSPECTIVE: &str = "perspective";
 pub const RI_ORTHOGRAPHIC: &str = "orthographic";
@@ -199,8 +199,8 @@ impl GraphicsState {
         }
     }
 
-    fn world_to_view(&self) -> Affine3 {
-        Affine3::from_translation(-self.camera_transform.translation)
+    fn world_to_view(&self) -> RtMatrix {
+        RtMatrix::from_translation(-self.camera_transform.w_axis.xyz())
     }
 
     fn view_to_ndc(&self, o: &Options) -> Affine3 {
@@ -377,21 +377,21 @@ pub unsafe extern "C" fn RiConcatTransform(transform: *const [[RtFloat; 4]; 4]) 
 #[no_mangle]
 pub extern "C" fn RiTranslate(dx: RtFloat, dy: RtFloat, dz: RtFloat) {
     let mut o = G_STATE.lock().unwrap();
-    let translate_transform = Affine3::from_translation(Vec3::new(dx, dy, dz));
+    let translate_transform = RtMatrix::from_translation(Vec3::new(dx, dy, dz));
     o.transformation_curr *= translate_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiRotate(theta: RtFloat, dx: RtFloat, dy: RtFloat, dz: RtFloat) {
     let mut o = G_STATE.lock().unwrap();
-    let rotate_transform = Affine3::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta.to_radians());
+    let rotate_transform = RtMatrix::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta.to_radians());
     o.transformation_curr *= rotate_transform
 }
 
 #[no_mangle]
 pub extern "C" fn RiScale(sx: RtFloat, sy: RtFloat, sz: RtFloat) {
     let mut o = G_STATE.lock().unwrap();
-    let scale_transform = Affine3::from_scale(Vec3::new(sx, sy, sz));
+    let scale_transform = RtMatrix::from_scale(Vec3::new(sx, sy, sz));
     o.transformation_curr *= scale_transform
 }
 
