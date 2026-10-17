@@ -470,18 +470,98 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
 }
 
 #[no_mangle]
-pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetamax: RtFloat) {
-    let _ = (radius, zmin, zmax, thetamax);
+pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, theta_max: RtFloat) {
+    let g = G_STATE.lock().unwrap();
+    let o = OPTIONS.lock().unwrap();
+
+    let (umax, vmax) = (20, 30);
+
+    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
+
+    for _u in 0..=umax {
+        for _v in 0..=vmax {
+            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
+
+            let theta = u * theta_max.to_radians();
+        
+            let (x, y, z) = (
+                radius * theta.cos(),
+                radius * theta.sin(),
+                v * (zmax - zmin),
+            );
+
+            let vert = grid.get_vertex_mut(_u, _v);
+            vert.p = Vec3::new(x, y, z);
+            vert.c = g.color;
+        }
+    }
+
+    grid.sample(&g, &o);
 }
 
 #[no_mangle]
-pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, thetamax: RtFloat) {
-    let _ = (height, radius, thetamax);
+pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
+    let g = G_STATE.lock().unwrap();
+    let o = OPTIONS.lock().unwrap();
+
+    let (umax, vmax) = (20, 30);
+
+    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
+
+    for _u in 0..=umax {
+        for _v in 0..=vmax {
+            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
+
+            let theta = u * theta_max.to_radians();
+        
+            let (x, y, z) = (
+                radius * theta.cos() * (1. - v),
+                radius * theta.sin() * (1. - v),
+                v * height,
+            );
+
+            let vert = grid.get_vertex_mut(_u, _v);
+            vert.p = Vec3::new(x, y, z);
+            vert.c = g.color;
+        }
+    }
+
+    grid.sample(&g, &o);
 }
 
 #[no_mangle]
-pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: RtFloat, phimax: RtFloat, thetamax: RtFloat) {
-    let _ = (majorradius, minorradius, phimin, phimax, thetamax);
+pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: RtFloat, phimax: RtFloat, theta_max: RtFloat) {
+    let g = G_STATE.lock().unwrap();
+    let o = OPTIONS.lock().unwrap();
+
+    let (umax, vmax) = (20, 30);
+
+    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
+
+    for _u in 0..=umax {
+        for _v in 0..=vmax {
+            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
+
+            let (theta, phi) = (
+                (u * theta_max).to_radians(),
+                (phimin + v * (phimax - phimin)).to_radians(),
+            );
+
+            let r = minorradius * phi.cos();
+        
+            let (x, y, z) = (
+                (majorradius + r) * theta.sin(),
+                (majorradius + r) * theta.cos(),
+                minorradius * phi.sin(),
+            );
+
+            let vert = grid.get_vertex_mut(_u, _v);
+            vert.p = Vec3::new(x, y, z);
+            vert.c = g.color;
+        }
+    }
+
+    grid.sample(&g, &o);
 }
 
 /// A mesh of polygons: polygon i has nverts[i] corners, whose indices into
