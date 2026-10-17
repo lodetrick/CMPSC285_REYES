@@ -96,7 +96,7 @@ impl MicroGrid {
 
     fn sample(&self, g: &GraphicsState, o: &Options) {
         let mut s = SCREEN_BUF.lock().unwrap();
-        let object_to_ndc = g.transformation_curr * g.world_to_view() * g.view_to_ndc(&o);
+        let object_to_ndc = g.transformation_curr * g.world_to_view() * g.view_to_screen(&o);
         let (w, h) = (o.xres as f32, o.yres as f32);
 
         for u in 0..=self.w {
@@ -146,7 +146,7 @@ pub type RtShaderFn = Option<unsafe extern "C" fn(*mut RtShaderContext)>;
 /* --------------------------------------------------------- type helpers */
 
 unsafe fn RtMatrix_from_ptr(transform: *const [[RtFloat; 4]; 4]) -> RtMatrix {
-    RtMatrix::from_mat4(glam::Mat4::from_cols_array_2d(transform.as_ref_unchecked()))
+    RtMatrix::from_cols_array_2d(transform.as_ref_unchecked())
 }
 
 /* --------------------------------------------------------- renderer state */
@@ -203,18 +203,34 @@ impl GraphicsState {
         RtMatrix::from_translation(-self.camera_transform.w_axis.xyz())
     }
 
-    fn view_to_ndc(&self, o: &Options) -> Affine3 {
-        let a = o.xres as f32 / o.yres as f32;
-        let (l, r) = if a >= 1. { (-a, a) } else { (-1.,1.) };
-        let (t, b) = if a >= 1. { (-1., 1.) } else { (-1. / a, 1. / a) };
-        let (n, f) = (0., 20.);
+    fn view_to_screen(&self, o: &Options) -> RtMatrix {
+        match o.projection {
+            Projection::Orthographic => {
+                let a = o.xres as f32 / o.yres as f32;
+                let (l, r) = if a >= 1. { (-a, a) } else { (-1.,1.) };
+                let (t, b) = if a >= 1. { (-1., 1.) } else { (-1. / a, 1. / a) };
+                let (n, f) = (0., 10000.);
 
-        Affine3::from_cols_array_2d(&[
-            [2. / (r - l),0.,0.], 
-            [0.,2. / (t - b),0.], 
-            [0.,0.,-2. / (f - n)], 
-            [-((r + l) / (r - l)),-((t + b) / (t - b)),-((f + n) / (f - n))],
-        ])
+                RtMatrix::from_cols_array_2d(&[
+                    [2. / (r - l),0.,0.,0.], 
+                    [0.,2. / (t - b),0.,0.], 
+                    [0.,0.,-2. / (f - n),0.], 
+                    [-((r + l) / (r - l)),-((t + b) / (t - b)),-((f + n) / (f - n)),1.],
+                ])
+            }
+            Projection::Perspective { fov } => {
+                let (yon, hither) = (0., 100.);
+
+                RtMatrix::from_cols_array_2d(&[
+                    [1. / (fov / 2.0).tan(),0.,0.,0.],
+                    [0.,1. / (fov / 2.0).tan(),0.,0.],
+                    [0.,0.,yon / (yon - hither),(- yon * hither / (yon - hither))],
+                    [0.,0.,1.,0.],
+                ])
+            }
+        }
+
+
     }
 }
 
