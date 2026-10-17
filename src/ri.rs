@@ -61,12 +61,14 @@ enum Projection {
 #[derive(Clone)]
 struct Vertex {
     p: Vec3,
+    c: RtColor,
 }
 
 impl Vertex {
-    fn new(p: Vec3) -> Self {
+    fn new(p: Vec3, c: RtColor) -> Self {
         Vertex {
             p,
+            c,
         }
     }
 }
@@ -80,7 +82,7 @@ struct MicroGrid {
 impl MicroGrid {
     fn new(w: usize, h: usize) -> Self {
         MicroGrid {
-            vertices: vec![Vertex::new(Vec3::ZERO); (w + 1) * (h + 1)],
+            vertices: vec![Vertex::new(Vec3::ZERO, [0.; 3]); (w + 1) * (h + 1)],
             w,
             h,
         }
@@ -89,14 +91,14 @@ impl MicroGrid {
     fn get_vertex(&self, x: usize, y: usize) -> &Vertex {
         &self.vertices[x + y * (self.w + 1)]
     }
-    
+
     fn get_vertex_mut(&mut self, x: usize, y: usize) -> &mut Vertex {
         &mut self.vertices[x + y * (self.w + 1)]
     }
 
     fn sample(&self, g: &GraphicsState, o: &Options) {
         let mut s = SCREEN_BUF.lock().unwrap();
-        let object_to_ndc = g.transformation_curr * g.world_to_view() * g.view_to_screen(&o);
+        let object_to_screen = g.transformation_curr * g.world_to_view() * g.view_to_screen(&o);
         let (w, h) = (o.xres as f32, o.yres as f32);
 
         for u in 0..=self.w {
@@ -182,7 +184,7 @@ static OPTIONS: Mutex<Options> = Mutex::new(Options::default());
 
 struct GraphicsState {
     color: RtColor,
-    opacity: RtFloat,
+    opacity: RtColor,
     transformation_curr: RtMatrix,
     transformation_stack: Vec<RtMatrix>,
     camera_transform: RtMatrix,
@@ -192,7 +194,7 @@ impl GraphicsState {
     const fn default() -> Self {
         GraphicsState {
             color: [1.,1.,1.],
-            opacity: 1.,
+            opacity: [1., 1., 1.],
             transformation_curr: RtMatrix::IDENTITY,
             transformation_stack: Vec::new(),
             camera_transform: RtMatrix::IDENTITY,
@@ -204,12 +206,13 @@ impl GraphicsState {
     }
 
     fn view_to_screen(&self, o: &Options) -> RtMatrix {
+        let (n, f) = (0., 10000.);
+
         match o.projection {
             Projection::Orthographic => {
                 let a = o.xres as f32 / o.yres as f32;
                 let (l, r) = if a >= 1. { (-a, a) } else { (-1.,1.) };
                 let (t, b) = if a >= 1. { (-1., 1.) } else { (-1. / a, 1. / a) };
-                let (n, f) = (0., 10000.);
 
                 RtMatrix::from_cols_array_2d(&[
                     [2. / (r - l),0.,0.,0.], 
@@ -218,19 +221,16 @@ impl GraphicsState {
                     [-((r + l) / (r - l)),-((t + b) / (t - b)),-((f + n) / (f - n)),1.],
                 ])
             }
-            Projection::Perspective { fov } => {
-                let (yon, hither) = (0., 100.);
 
+            Projection::Perspective { fov } => {
                 RtMatrix::from_cols_array_2d(&[
                     [1. / (fov / 2.0).tan(),0.,0.,0.],
                     [0.,1. / (fov / 2.0).tan(),0.,0.],
-                    [0.,0.,yon / (yon - hither),(- yon * hither / (yon - hither))],
+                    [0.,0.,f / (f - n),(- f * n / (f - n))],
                     [0.,0.,1.,0.],
                 ])
             }
         }
-
-
     }
 }
 
@@ -446,7 +446,7 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
     let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
 
     for _u in 0..=umax {
-        for _v in 0..=vmax {    
+        for _v in 0..=vmax {
             let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
 
             let (phi, theta) = (
@@ -462,6 +462,7 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
 
             let vert = grid.get_vertex_mut(_u, _v);
             vert.p = Vec3::new(x, y, z);
+            vert.c = g.color;
         }
     }
 
@@ -515,7 +516,7 @@ pub unsafe extern "C" fn RiColor(color: *const [RtFloat; 3]) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn RiOpacity(opacity: *const RtFloat) {
+pub unsafe extern "C" fn RiOpacity(opacity: *const [RtFloat; 3]) {
     let mut g = G_STATE.lock().unwrap();
     g.opacity = *opacity;
 }
