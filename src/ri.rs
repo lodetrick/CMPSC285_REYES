@@ -33,7 +33,8 @@
 use std::ffi::{c_char, c_void, CStr};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Mutex;
+use std::ptr;
+use std::sync::{Arc, Mutex};
 
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
 
@@ -44,7 +45,7 @@ pub type RtFloat = f32;
 pub type RtInt = i32;
 pub type RtToken = *const c_char;
 pub type RtPointer = *mut c_void;
-pub type RtColor = [RtFloat; 3];
+pub type RtColor = Vec3;
 pub type RtPoint = Vec3;
 pub type RtVector = Vec3;
 pub type RtNormal = Vec3;
@@ -62,13 +63,19 @@ enum Projection {
 struct Vertex {
     p: Vec3,
     c: RtColor,
+    o: RtColor,
+    u: f32,
+    v: f32,
 }
 
 impl Vertex {
-    fn new(p: Vec3, c: RtColor) -> Self {
+    fn new(p: Vec3, c: RtColor, o: RtColor, u: f32, v: f32) -> Self {
         Vertex {
             p,
             c,
+            o,
+            u,
+            v,
         }
     }
 }
@@ -91,16 +98,9 @@ impl<'a> Triangle<'a> {
     fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Vec<PixelSamples>, w: f32, h: f32) {
         // Transform object coordinates to NDC coordinates
         let (p1, p2, p3) = (
-            object_to_screen.mul_vec4(self.v1.p.extend(1.)),
-            object_to_screen.mul_vec4(self.v2.p.extend(1.)),
-            object_to_screen.mul_vec4(self.v3.p.extend(1.)),
-        );
-
-        // Normalize by w if it is non-zero
-        let (p1, p2, p3) = (
-            p1.xyz() / p1.w,
-            p2.xyz() / p2.w,
-            p3.xyz() / p3.w,
+            map_to_space(object_to_screen, self.v1.p),
+            map_to_space(object_to_screen, self.v2.p),
+            map_to_space(object_to_screen, self.v3.p),
         );
         
         let (r1, r2, r3) = (
@@ -127,14 +127,16 @@ impl<'a> Triangle<'a> {
             (y_max.ceil() as usize).min(h as usize),
         );
 
-        for i in x_min..=x_max {
-            for j in y_min..=y_max {
+        for i in x_min..x_max {
+            for j in y_min..y_max {
                 let pixel_sample = &mut s[get_samples_index(i, j, w as usize)];
                 let pixel_base = Vec2::new(i as f32, j as f32);
                 let (xsamples, ysamples) = (pixel_sample.xsamples, pixel_sample.ysamples);
 
                 for s_i in 0..xsamples {
                     for s_j in 0..ysamples {
+                        let sample = &mut pixel_sample.samples[s_i + s_j * xsamples];
+
                         // Generate the position of the pixel
                         let r = pixel_base + Vec2::new(
                             (s_i as f32 + 0.5) / (xsamples as f32),
@@ -154,15 +156,22 @@ impl<'a> Triangle<'a> {
                         if 0. <= w1 && w1 <= 1.
                         && 0. <= w2 && w2 <= 1.
                         && 0. <= w3 && w3 <= 1. {
-                            pixel_sample.samples[s_i + s_j * xsamples].color = self.v1.c;
-                            pixel_sample.samples[s_i + s_j * xsamples].opacity = [1., 1., 1.];
+                            let depth = barycentric(w1, w2, w3, p1.z, p2.z, p3.z);
+                            if sample.depth > depth {
+                                sample.depth = depth;
+                                sample.color = self.v1.c;
+                                sample.opacity = Vec3::ONE;
+                            }
                         }
                     }
                 }
-
             }
         }
     }
+}
+
+fn barycentric(alpha: f32, beta: f32, gamma: f32, v1: f32, v2: f32, v3: f32) -> f32 {
+    alpha * v1 + beta * v2 + gamma * v3
 }
 
 struct MicroGrid {
@@ -174,7 +183,7 @@ struct MicroGrid {
 impl MicroGrid {
     fn new(w: usize, h: usize) -> Self {
         MicroGrid {
-            vertices: vec![Vertex::new(Vec3::ZERO, [0.; 3]); (w + 1) * (h + 1)],
+            vertices: vec![Vertex::new(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, 0., 0.); (w + 1) * (h + 1)],
             w,
             h,
         }
@@ -188,7 +197,55 @@ impl MicroGrid {
         &mut self.vertices[x + y * (self.w + 1)]
     }
 
-    fn sample(&self, g: &GraphicsState, o: &Options) {
+    fn shade(&mut self, g: &GraphicsState, o: &Options) {
+        let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
+        let object_to_world = g.world_to_view() * g.transformation_curr;
+
+        for u in 0..self.w {
+            for v in 0..self.h {
+                let n = {
+                    let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
+                    let p2_w = map_to_space(object_to_world, self.get_vertex(u + 1, v).p);
+                    let p3_w = map_to_space(object_to_world, self.get_vertex(u, v + 1).p);
+                    (p1_w - p2_w).cross(p1_w - p3_w).normalize()
+                };
+
+                let vertex = self.get_vertex_mut(u, v);
+                
+                if let Some(shader_fn) = g.shader_fn {
+                    let p_screen = map_to_space(object_to_screen, vertex.p);
+                    
+                    let params: *const c_void = if let Some(shader_params) = &g.shader_params {
+                        shader_params.as_ptr() as *const c_void
+                    } else {
+                        ptr::null()
+                    };
+
+                    let mut shader_context = RtShaderContext {
+                        P: p_screen,
+                        Po: vertex.p, /* same point in object space */
+                        N: n, /* unit normal, recomputed after displacement */
+                        u: vertex.u, /* surface parameters in [0,1], or a mesh's st */
+                        v: vertex.v,
+                        Cs: g.color, /* current RiColor and RiOpacity */
+                        Os: g.opacity,
+                        params: params,
+                        Ci: Vec3::ZERO, /* written by surface shaders */
+                        Oi: Vec3::ZERO,
+                    };
+    
+                    unsafe {
+                        shader_fn(&mut shader_context);
+                    }
+
+                    vertex.c = shader_context.Ci;
+                    vertex.o = shader_context.Oi;
+                }
+            }
+        }
+    }
+
+    fn sample(&mut self, g: &GraphicsState, o: &Options) {
         let mut s = SAMPLE_BUF.lock().unwrap();
         let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
         let (w, h) = (o.xres as f32, o.yres as f32);
@@ -242,6 +299,11 @@ unsafe fn RtMatrix_from_ptr(transform: *const [[RtFloat; 4]; 4]) -> RtMatrix {
     RtMatrix::from_cols_array_2d(transform.as_ref_unchecked())
 }
 
+fn map_to_space(transform: RtMatrix, p: Vec3) -> Vec3 {
+    let p_transformed = transform.mul_vec4(p.extend(1.));
+    p_transformed.xyz() / p_transformed.w
+}
+
 /* --------------------------------------------------------- renderer state */
 
 /// What the scene has asked for so far. The finished renderer keeps much
@@ -279,16 +341,20 @@ struct GraphicsState {
     transformation_curr: RtMatrix,
     transformation_stack: Vec<RtMatrix>,
     camera_transform: RtMatrix,
+    shader_fn: RtShaderFn,
+    shader_params: Option<Arc<[u8]>>,
 }
 
 impl GraphicsState {
     const fn default() -> Self {
         GraphicsState {
-            color: [1.,1.,1.],
-            opacity: [1., 1., 1.],
+            color: Vec3::ONE,
+            opacity: Vec3::ONE,
             transformation_curr: RtMatrix::IDENTITY,
             transformation_stack: Vec::new(),
             camera_transform: RtMatrix::IDENTITY,
+            shader_fn: None,
+            shader_params: None,
         }
     }
 
@@ -340,12 +406,22 @@ unsafe fn token(s: *const c_char) -> &'static str {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct Sample {
     color: RtColor,
     depth: RtFloat,
     opacity: RtColor,
-} 
+}
+
+impl Sample {
+    fn default() -> Self {
+        Sample { 
+            color: Vec3::ZERO,
+            depth: f32::INFINITY, 
+            opacity: Vec3::ZERO,
+        }
+    }
+}
 
 #[derive(Clone)]
 struct PixelSamples {
@@ -360,29 +436,13 @@ impl PixelSamples {
     }
 }
 
+
+// array2<binaryheap<pixelsamples>>
 static SAMPLE_BUF: Mutex<Vec<PixelSamples>> = Mutex::new(Vec::new());
 
 #[inline]
 fn get_samples_index(x: usize, y: usize, w: usize) -> usize {
     x + y * w
-}
-
-fn write_color_to_screen_01(s: &mut Vec<RtFloat>, x: f32, y: f32, w: f32, h: f32, c: RtColor) {
-    let index = 4 * (((x * w) + ((y * h).floor() * w)) as usize);
-    if index >= s.len() { return; }
-    s[index] = c[0];
-    s[index + 1] = c[1];
-    s[index + 2] = c[2];
-    s[index + 3] = 1.;
-}
-
-fn write_color_to_screen_xy(s: &mut Vec<RtFloat>, x: usize, y: usize, w: usize, c: RtColor) {
-    let index = 4 * (x + (y * w));
-    if index >= s.len() { return; }
-    s[index] = c[0];
-    s[index + 1] = c[1];
-    s[index + 2] = c[2];
-    s[index + 3] = 1.;
 }
 
 /* ---------------------------------------------------------- graphics state */
@@ -457,9 +517,6 @@ pub extern "C" fn RiWorldBegin() {
         (o.xres as usize, o.yres as usize)
     };
 
-    // *DEPTH_BUF.lock().unwrap() = vec![f32::INFINITY; w * h];
-    // *SCREEN_BUF.lock().unwrap() = vec![0.0f32; w * h * 4];
-
     let o = OPTIONS.lock().unwrap();
     *SAMPLE_BUF.lock().unwrap() = vec![PixelSamples::new(o.xsamples as usize, o.ysamples as usize); w * h];
 }
@@ -480,11 +537,12 @@ pub extern "C" fn RiWorldEnd() {
             for y in 0..h {
                 let pos = get_samples_index(x, y, w);
 
-                let mut depth = 0.0;
+                let mut depth = f32::INFINITY;
                 for sample in &samples[pos].samples {
-                    depth += sample.depth;
+                    if depth > sample.depth {
+                        depth = sample.depth;
+                    }
                 }
-                depth /= (xsamples * ysamples) as f32;
 
                 depth_buf[pos] = depth;
             }
@@ -645,9 +703,13 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
             let vert = grid.get_vertex_mut(_u, _v);
             vert.p = Vec3::new(x, y, z);
             vert.c = g.color;
+            vert.o = g.opacity;
+            vert.u = u;
+            vert.v = v;
         }
     }
 
+    grid.shade(&g, &o);
     grid.sample(&g, &o);
 }
 
@@ -675,9 +737,13 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
             let vert = grid.get_vertex_mut(_u, _v);
             vert.p = Vec3::new(x, y, z);
             vert.c = g.color;
+            vert.o = g.opacity;
+            vert.u = u;
+            vert.v = v;
         }
     }
 
+    grid.shade(&g, &o);
     grid.sample(&g, &o);
 }
 
@@ -705,9 +771,13 @@ pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
             let vert = grid.get_vertex_mut(_u, _v);
             vert.p = Vec3::new(x, y, z);
             vert.c = g.color;
+            vert.o = g.opacity;
+            vert.u = u;
+            vert.v = v;
         }
     }
 
+    grid.shade(&g, &o);
     grid.sample(&g, &o);
 }
 
@@ -740,9 +810,13 @@ pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: Rt
             let vert = grid.get_vertex_mut(_u, _v);
             vert.p = Vec3::new(x, y, z);
             vert.c = g.color;
+            vert.o = g.opacity;
+            vert.u = u;
+            vert.v = v;
         }
     }
 
+    grid.shade(&g, &o);
     grid.sample(&g, &o);
 }
 
@@ -774,13 +848,13 @@ pub unsafe extern "C" fn RiPointsPolygons(
 #[no_mangle]
 pub unsafe extern "C" fn RiColor(color: *const [RtFloat; 3]) {
     let mut g = G_STATE.lock().unwrap();
-    g.color = (*color).clone();
+    g.color = Vec3::new((*color)[0], (*color)[1], (*color)[2]);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RiOpacity(opacity: *const [RtFloat; 3]) {
     let mut g = G_STATE.lock().unwrap();
-    g.opacity = *opacity;
+    g.opacity = Vec3::new((*opacity)[0], (*opacity)[1], (*opacity)[2]);;
 }
 
 /// Bind a shader to the primitives that follow. Copy nbytes of params now
@@ -790,7 +864,14 @@ pub unsafe extern "C" fn RiOpacity(opacity: *const [RtFloat; 3]) {
 /// (Section 5).
 #[no_mangle]
 pub unsafe extern "C" fn RiSurface(fn_: RtShaderFn, params: *const c_void, nbytes: usize) {
-    let _ = (fn_, params, nbytes);
+    let mut g = G_STATE.lock().unwrap();
+
+    g.shader_fn = fn_;
+
+    if !params.is_null() {
+        let params = std::slice::from_raw_parts(params as *const u8, nbytes);
+        g.shader_params = Some(params.into());
+    }
 }
 
 #[no_mangle]
