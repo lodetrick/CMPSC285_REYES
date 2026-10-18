@@ -88,7 +88,7 @@ impl<'a> Triangle<'a> {
         }
     }
 
-    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Vec<f32>, w: f32, h: f32) {
+    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Vec<PixelSamples>, w: f32, h: f32) {
         // Transform object coordinates to NDC coordinates
         let (p1, p2, p3) = (
             object_to_screen.mul_vec4(self.v1.p.extend(1.)),
@@ -121,28 +121,45 @@ impl<'a> Triangle<'a> {
         if x_max < 0. || x_min > w || y_max < 0. || y_min > h { return; }
 
         let (x_min, x_max, y_min, y_max) = (
-            x_min.floor().max(0.0) as usize,
-            x_max.floor().min(w) as usize,
-            y_min.floor().max(0.0) as usize,
-            y_max.floor().max(h) as usize,
+            (x_min.floor() - 1.).max(0.0) as usize,
+            (x_max.ceil() as usize).min(w as usize),
+            (y_min.floor() - 1.).max(0.0) as usize,
+            (y_max.ceil() as usize).min(h as usize),
         );
 
-        for i in x_min..x_max {
-            for j in y_min..y_max {
-                // if pixel is in the tri, then draw it
-                let r = Vec2::new(i as f32 + 0.5, j as f32 + 0.5);
+        for i in x_min..=x_max {
+            for j in y_min..=y_max {
+                let pixel_sample = &mut s[get_samples_index(i, j, w as usize)];
+                let pixel_base = Vec2::new(i as f32, j as f32);
+                let (xsamples, ysamples) = (pixel_sample.xsamples, pixel_sample.ysamples);
 
-                let (w1, w2, w3) = (
-                    (r-r3).perp_dot(r2-r3) / (r1-r3).perp_dot(r2-r3),
-                    (r-r3).perp_dot(r3-r1) / (r1-r3).perp_dot(r2-r3),
-                    (r-r1).perp_dot(r1-r2) / (r1-r3).perp_dot(r2-r3),
-                );
+                for s_i in 0..xsamples {
+                    for s_j in 0..ysamples {
+                        // Generate the position of the pixel
+                        let r = pixel_base + Vec2::new(
+                            (s_i as f32 + 0.5) / (xsamples as f32),
+                            (s_j as f32 + 0.5) / (ysamples as f32),
+                        );
 
-                if 0. <= w1 && w1 <= 1.
-                && 0. <= w2 && w2 <= 1.
-                && 0. <= w3 && w3 <= 1. {
-                    write_color_to_screen_xy(s, i, j, w as usize, self.v1.c);
+                        let tri_area = (r1-r3).perp_dot(r2-r3);
+
+                        if tri_area.abs() < 1e-8 { continue; }
+        
+                        let (w1, w2, w3) = (
+                            (r-r3).perp_dot(r2-r3) / tri_area,
+                            (r-r3).perp_dot(r3-r1) / tri_area,
+                            (r-r1).perp_dot(r1-r2) / tri_area,
+                        );
+        
+                        if 0. <= w1 && w1 <= 1.
+                        && 0. <= w2 && w2 <= 1.
+                        && 0. <= w3 && w3 <= 1. {
+                            pixel_sample.samples[s_i + s_j * xsamples].color = self.v1.c;
+                            pixel_sample.samples[s_i + s_j * xsamples].opacity = [1., 1., 1.];
+                        }
+                    }
                 }
+
             }
         }
     }
@@ -172,7 +189,7 @@ impl MicroGrid {
     }
 
     fn sample(&self, g: &GraphicsState, o: &Options) {
-        let mut s = SCREEN_BUF.lock().unwrap();
+        let mut s = SAMPLE_BUF.lock().unwrap();
         let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
         let (w, h) = (o.xres as f32, o.yres as f32);
 
@@ -233,8 +250,8 @@ unsafe fn RtMatrix_from_ptr(transform: *const [[RtFloat; 4]; 4]) -> RtMatrix {
 struct Options {
     xres: i32,
     yres: i32,
-    xsamples: i32,
-    ysamples: i32,
+    xsamples: usize,
+    ysamples: usize,
     display: String,
     depth_display: bool, /* RiDisplay(name, "zfile", "z") */
     projection: Projection
@@ -323,8 +340,32 @@ unsafe fn token(s: *const c_char) -> &'static str {
     }
 }
 
-static DEPTH_BUF: Mutex<Vec<RtFloat>> = Mutex::new(Vec::new());
-static SCREEN_BUF: Mutex<Vec<RtFloat>> = Mutex::new(Vec::new());
+#[derive(Default, Clone)]
+struct Sample {
+    color: RtColor,
+    depth: RtFloat,
+    opacity: RtColor,
+} 
+
+#[derive(Clone)]
+struct PixelSamples {
+    xsamples: usize,
+    ysamples: usize,
+    samples: Vec<Sample>,
+}
+
+impl PixelSamples {
+    fn new(xsamples: usize, ysamples: usize) -> Self {
+        PixelSamples { xsamples, ysamples, samples: vec![Sample::default(); xsamples * ysamples] }
+    }
+}
+
+static SAMPLE_BUF: Mutex<Vec<PixelSamples>> = Mutex::new(Vec::new());
+
+#[inline]
+fn get_samples_index(x: usize, y: usize, w: usize) -> usize {
+    x + y * w
+}
 
 fn write_color_to_screen_01(s: &mut Vec<RtFloat>, x: f32, y: f32, w: f32, h: f32, c: RtColor) {
     let index = 4 * (((x * w) + ((y * h).floor() * w)) as usize);
@@ -378,8 +419,8 @@ pub extern "C" fn RiFormat(xres: RtInt, yres: RtInt) {
 #[no_mangle]
 pub extern "C" fn RiPixelSamples(xsamples: RtInt, ysamples: RtInt) {
     let mut o = OPTIONS.lock().unwrap();
-    o.xsamples = xsamples.max(1);
-    o.ysamples = ysamples.max(1);
+    o.xsamples = xsamples.max(1) as usize;
+    o.ysamples = ysamples.max(1) as usize;
 }
 
 /// The output file, written into renders/ by RiWorldEnd. RiDisplay(name, "",
@@ -416,22 +457,67 @@ pub extern "C" fn RiWorldBegin() {
         (o.xres as usize, o.yres as usize)
     };
 
-    *DEPTH_BUF.lock().unwrap() = vec![f32::INFINITY; w * h];
-    *SCREEN_BUF.lock().unwrap() = vec![0.0f32; w * h * 4];
+    // *DEPTH_BUF.lock().unwrap() = vec![f32::INFINITY; w * h];
+    // *SCREEN_BUF.lock().unwrap() = vec![0.0f32; w * h * 4];
+
+    let o = OPTIONS.lock().unwrap();
+    *SAMPLE_BUF.lock().unwrap() = vec![PixelSamples::new(o.xsamples as usize, o.ysamples as usize); w * h];
 }
 
 #[no_mangle]
 pub extern "C" fn RiWorldEnd() {
     // TODO: your pixels. For now, a black, fully transparent image (or an
     // empty depth image, +infinity everywhere).
-    let (w, h, depth) = {
+    let (w, h, depth, xsamples, ysamples) = {
         let o = OPTIONS.lock().unwrap();
-        (o.xres as usize, o.yres as usize, o.depth_display)
+        (o.xres as usize, o.yres as usize, o.depth_display, o.xsamples, o.ysamples)
     };
+
+    let samples = SAMPLE_BUF.lock().unwrap();
     if depth {
-        write_depth(&DEPTH_BUF.lock().unwrap());
+        let mut depth_buf: Vec<RtFloat> = vec![0.; w * h];
+        for x in 0..w {
+            for y in 0..h {
+                let pos = get_samples_index(x, y, w);
+
+                let mut depth = 0.0;
+                for sample in &samples[pos].samples {
+                    depth += sample.depth;
+                }
+                depth /= (xsamples * ysamples) as f32;
+
+                depth_buf[pos] = depth;
+            }
+        }
+
+        write_depth(&depth_buf);
     } else {
-        write_image(&SCREEN_BUF.lock().unwrap());
+        let mut screen_buf: Vec<RtFloat> = vec![0.; 4 * w * h];
+        for x in 0..w {
+            for y in 0..h {
+                let pos = get_samples_index(x, y, w);
+
+                let mut color = [0.0, 0.0, 0.0];
+                let mut opacity = 0.;
+                for sample in &samples[pos].samples {
+                    color[0] += sample.color[0];
+                    color[1] += sample.color[1];
+                    color[2] += sample.color[2];
+                    opacity += sample.opacity[0];
+                }
+                color[0] /= (xsamples * ysamples) as f32;
+                color[1] /= (xsamples * ysamples) as f32;
+                color[2] /= (xsamples * ysamples) as f32;
+                opacity /= (xsamples * ysamples) as f32;
+                
+                screen_buf[4 * pos] = color[0];
+                screen_buf[4 * pos + 1] = color[1];
+                screen_buf[4 * pos + 2] = color[2];
+                screen_buf[4 * pos + 3] = opacity;
+            }
+        }
+
+        write_image(&screen_buf);
     }
 }
 
