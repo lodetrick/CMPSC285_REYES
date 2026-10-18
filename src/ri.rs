@@ -117,7 +117,6 @@ impl<'a> Triangle<'a> {
             r1.y.max(r2.y.max(r3.y)),
         );
 
-        write_color_to_screen_xy(s, r1.x as usize, r1.y as usize, w as usize, self.v1.c);
         // Don't render tris outside of the screen.
         if x_max < 0. || x_min > w || y_max < 0. || y_min > h { return; }
 
@@ -131,14 +130,13 @@ impl<'a> Triangle<'a> {
         for i in x_min..x_max {
             for j in y_min..y_max {
                 // if pixel is in the tri, then draw it
-                let r = Vec2::new(i as f32, j as f32);
+                let r = Vec2::new(i as f32 + 0.5, j as f32 + 0.5);
 
                 let (w1, w2, w3) = (
                     (r-r3).perp_dot(r2-r3) / (r1-r3).perp_dot(r2-r3),
                     (r-r3).perp_dot(r3-r1) / (r1-r3).perp_dot(r2-r3),
                     (r-r1).perp_dot(r1-r2) / (r1-r3).perp_dot(r2-r3),
                 );
-                // println!("{w1} {w2} {w3}");
 
                 if 0. <= w1 && w1 <= 1.
                 && 0. <= w2 && w2 <= 1.
@@ -278,7 +276,7 @@ impl GraphicsState {
     }
 
     fn world_to_view(&self) -> RtMatrix {
-        RtMatrix::from_translation(-self.camera_transform.w_axis.xyz())
+        self.camera_transform.inverse()
     }
 
     fn view_to_screen(&self, o: &Options) -> RtMatrix {
@@ -327,6 +325,24 @@ unsafe fn token(s: *const c_char) -> &'static str {
 
 static DEPTH_BUF: Mutex<Vec<RtFloat>> = Mutex::new(Vec::new());
 static SCREEN_BUF: Mutex<Vec<RtFloat>> = Mutex::new(Vec::new());
+
+fn write_color_to_screen_01(s: &mut Vec<RtFloat>, x: f32, y: f32, w: f32, h: f32, c: RtColor) {
+    let index = 4 * (((x * w) + ((y * h).floor() * w)) as usize);
+    if index >= s.len() { return; }
+    s[index] = c[0];
+    s[index + 1] = c[1];
+    s[index + 2] = c[2];
+    s[index + 3] = 1.;
+}
+
+fn write_color_to_screen_xy(s: &mut Vec<RtFloat>, x: usize, y: usize, w: usize, c: RtColor) {
+    let index = 4 * (x + (y * w));
+    if index >= s.len() { return; }
+    s[index] = c[0];
+    s[index + 1] = c[1];
+    s[index + 2] = c[2];
+    s[index + 3] = 1.;
+}
 
 /* ---------------------------------------------------------- graphics state */
 
@@ -429,7 +445,7 @@ pub unsafe extern "C" fn RiProjection(p_name: RtToken, p_token: RtToken, p_value
     let mut o = OPTIONS.lock().unwrap();
     match token(p_name) {
         RI_PERSPECTIVE => {
-            o.projection = Projection::Perspective { fov: *(p_value as *const f32) }
+            o.projection = Projection::Perspective { fov: (*(p_value as *const f32)).to_radians() }
         }
         RI_ORTHOGRAPHIC => { o.projection = Projection::Orthographic; }
         err => panic!("Invalid Projection: {err}")
@@ -521,7 +537,7 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
         thetamax.to_radians()
     );
 
-    let (umax, vmax) = (50, 30);
+    let (umax, vmax) = (20, 30);
 
     let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
 
@@ -567,7 +583,7 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
             let (x, y, z) = (
                 radius * theta.cos(),
                 radius * theta.sin(),
-                v * (zmax - zmin),
+                zmin + v * (zmax - zmin),
             );
 
             let vert = grid.get_vertex_mut(_u, _v);
