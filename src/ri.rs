@@ -159,8 +159,8 @@ impl<'a> Triangle<'a> {
                             let depth = barycentric(w1, w2, w3, p1.z, p2.z, p3.z);
                             if sample.depth > depth {
                                 sample.depth = depth;
-                                sample.color = self.v1.c;
-                                sample.opacity = Vec3::ONE;
+                                sample.color = barycentric_vec(w1, w2, w3, self.v1.c, self.v2.c, self.v3.c);
+                                sample.opacity = barycentric_vec(w1, w2, w3, self.v1.o, self.v2.o, self.v3.o);
                             }
                         }
                     }
@@ -171,6 +171,10 @@ impl<'a> Triangle<'a> {
 }
 
 fn barycentric(alpha: f32, beta: f32, gamma: f32, v1: f32, v2: f32, v3: f32) -> f32 {
+    v1 * alpha + v2 * beta + v3 * gamma
+}
+
+fn barycentric_vec(alpha: f32, beta: f32, gamma: f32, v1: Vec3, v2: Vec3, v3: Vec3) -> Vec3 {
     alpha * v1 + beta * v2 + gamma * v3
 }
 
@@ -201,12 +205,13 @@ impl MicroGrid {
         let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
         let object_to_world = g.world_to_view() * g.transformation_curr;
 
-        for u in 0..self.w {
-            for v in 0..self.h {
+        for u in 0..=self.w {
+            for v in 0..=self.h {
+
                 let n = {
                     let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
-                    let p2_w = map_to_space(object_to_world, self.get_vertex(u + 1, v).p);
-                    let p3_w = map_to_space(object_to_world, self.get_vertex(u, v + 1).p);
+                    let p2_w = map_to_space(object_to_world, self.get_vertex(if u == self.w {u - 1} else {u + 1}, v).p);
+                    let p3_w = map_to_space(object_to_world, self.get_vertex(u, if v == self.h {v - 1} else {v + 1}).p);
                     (p1_w - p2_w).cross(p1_w - p3_w).normalize()
                 };
 
@@ -676,8 +681,8 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
     let o = OPTIONS.lock().unwrap();
 
     let (phi_min, phi_max, theta_max) = (
-        if zmin > -radius {f32::asin(zmin / radius)} else {f32::to_radians(-90.0)},
-        if zmax < radius {f32::asin(zmax / radius)} else {f32::to_radians(90.0)},
+        if zmin > -radius {f32::asin(zmin.clamp(-radius, radius) / radius)} else {f32::to_radians(-90.0)},
+        if zmax < radius {f32::asin(zmax.clamp(-radius, radius) / radius)} else {f32::to_radians(90.0)},
         thetamax.to_radians()
     );
 
@@ -786,7 +791,7 @@ pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: Rt
     let g = G_STATE.lock().unwrap();
     let o = OPTIONS.lock().unwrap();
 
-    let (umax, vmax) = (20, 30);
+    let (umax, vmax) = (100, 200);
 
     let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
 
@@ -866,7 +871,12 @@ pub unsafe extern "C" fn RiOpacity(opacity: *const [RtFloat; 3]) {
 pub unsafe extern "C" fn RiSurface(fn_: RtShaderFn, params: *const c_void, nbytes: usize) {
     let mut g = G_STATE.lock().unwrap();
 
-    g.shader_fn = fn_;
+    match fn_ {
+        Some(_) => { g.shader_fn = fn_ }
+        None => {
+            g.shader_fn = Some(crate::shaders::STANDARD)
+        }
+    };
 
     if !params.is_null() {
         let params = std::slice::from_raw_parts(params as *const u8, nbytes);
