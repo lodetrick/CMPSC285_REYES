@@ -37,6 +37,7 @@ use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
+use image::{DynamicImage, ImageReader};
 use ndarray::Array2;
 
 /* ------------------------------------------------------------------ types */
@@ -471,6 +472,8 @@ fn get_samples_index(x: usize, y: usize, w: usize) -> usize {
     x + y * w
 }
 
+static TEXTURE_BUF: Mutex<Option<[DynamicImage; 8]>> = Mutex::new(None);
+
 /* ---------------------------------------------------------- graphics state */
 
 /// RiBegin starts a rendering session and resets the graphics state to
@@ -632,7 +635,7 @@ pub extern "C" fn RiWorldEnd() {
 /// also resets the current transformation to the identity: the camera
 /// transform is built after it (Section 2). value points at an RtFloat.
 #[no_mangle]
-pub unsafe extern "C" fn RiProjection(p_name: RtToken, p_token: RtToken, p_value: RtPointer) {
+pub unsafe extern "C" fn RiProjection(p_name: RtToken, _p_token: RtToken, p_value: RtPointer) {
     let mut o = OPTIONS.lock().unwrap();
     match token(p_name) {
         RI_PERSPECTIVE => {
@@ -844,7 +847,7 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
             radius * theta.sin(),
             zmin + v * (zmax - zmin),
         )
-    }, |u, v| -> Vec3 {
+    }, |u, _v| -> Vec3 {
         let theta = u * theta_max.to_radians();
 
         Vec3::new(
@@ -882,7 +885,7 @@ pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
             radius * theta.sin() * (1. - v),
             v * height,
         )
-    }, |u, v| -> Vec3 {
+    }, |u, _v| -> Vec3 {
         let theta = u * theta_max.to_radians();
 
         Vec3::new(
@@ -900,12 +903,12 @@ pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: Rt
         let o = OPTIONS.lock().unwrap();
 
         let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
-        dicer.add_point(Vec3::new((majorradius + minorradius), (majorradius + minorradius), minorradius));
-        dicer.add_point(Vec3::new((majorradius + minorradius), (majorradius + minorradius), -minorradius));
-        dicer.add_point(Vec3::new((majorradius + minorradius), -(majorradius + minorradius), minorradius));
-        dicer.add_point(Vec3::new((majorradius + minorradius), -(majorradius + minorradius), -minorradius));
-        dicer.add_point(Vec3::new(-(majorradius + minorradius), (majorradius + minorradius), minorradius));
-        dicer.add_point(Vec3::new(-(majorradius + minorradius), (majorradius + minorradius), -minorradius));
+        dicer.add_point(Vec3::new(majorradius + minorradius, majorradius + minorradius, minorradius));
+        dicer.add_point(Vec3::new(majorradius + minorradius, majorradius + minorradius, -minorradius));
+        dicer.add_point(Vec3::new(majorradius + minorradius, -(majorradius + minorradius), minorradius));
+        dicer.add_point(Vec3::new(majorradius + minorradius, -(majorradius + minorradius), -minorradius));
+        dicer.add_point(Vec3::new(-(majorradius + minorradius), majorradius + minorradius, minorradius));
+        dicer.add_point(Vec3::new(-(majorradius + minorradius), majorradius + minorradius, -minorradius));
         dicer.add_point(Vec3::new(-(majorradius + minorradius), -(majorradius + minorradius), minorradius));
         dicer.add_point(Vec3::new(-(majorradius + minorradius), -(majorradius + minorradius), -minorradius));
 
@@ -973,7 +976,7 @@ pub unsafe extern "C" fn RiColor(color: *const [RtFloat; 3]) {
 #[no_mangle]
 pub unsafe extern "C" fn RiOpacity(opacity: *const [RtFloat; 3]) {
     let mut g = G_STATE.lock().unwrap();
-    g.opacity = Vec3::new((*opacity)[0], (*opacity)[1], (*opacity)[2]);;
+    g.opacity = Vec3::new((*opacity)[0], (*opacity)[1], (*opacity)[2]);
 }
 
 /// Bind a shader to the primitives that follow. Copy nbytes of params now
@@ -1012,7 +1015,18 @@ pub unsafe extern "C" fn RiDisplacement(fn_: RtShaderFn, params: *const c_void, 
 /// result points at three floats.
 #[no_mangle]
 pub unsafe extern "C" fn RiMakeTexture(file: *const c_char, slot: RtInt) {
-    let _ = (token(file), slot);
+    fn load_image(file: &str) -> Result<DynamicImage, image::ImageError> {
+        ImageReader::open(file)?.decode()
+    }
+
+    let Ok(image) = load_image(token(file)) else {
+        panic!("Unknown Image file: {}", token(file));
+    };
+
+    let tex = &mut TEXTURE_BUF.lock().unwrap();
+    let tex = tex.as_mut().unwrap();
+
+    tex[slot as usize] = image;
 }
 
 #[no_mangle]
