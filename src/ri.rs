@@ -705,17 +705,44 @@ pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
 
 /* ---------------------------------------------------------------- primitives */
 
-fn render_primitive<F1, F2>(pos_fn: F1, norm_fn: F2) 
+struct Dicer {
+    x_min: f32,
+    x_max: f32,
+    y_min: f32,
+    y_max: f32,
+    obj_to_screen: RtMatrix,
+    w: f32,
+    h: f32,
+}
+
+impl Dicer {
+    fn new(obj_to_screen: RtMatrix, w: f32, h: f32) -> Self {
+        Dicer { x_min: f32::INFINITY, x_max: 0.0, y_min: f32::INFINITY, y_max: 0.0, obj_to_screen, w, h }
+    }
+
+    fn add_point(&mut self, p: Vec3) {
+        let p = map_to_space(self.obj_to_screen, p);
+        let p = Vec2::new((p.x + 1.) * 0.5 * self.w, (1. - p.y) * 0.5 * self.h);
+
+        self.x_min = self.x_min.min(p.x);
+        self.x_max = self.x_min.max(p.x);
+        self.y_min = self.y_min.min(p.y);
+        self.y_max = self.y_min.max(p.y);
+    }
+
+    fn get_dice_rate(&self, clamp_min: usize) -> (usize, usize) {
+        let diag = Vec2::new(self.x_max - self.x_min, self.y_max - self.y_min).length();
+        let n = ((2.0 * diag).round() as usize).clamp(clamp_min, 1024);
+        (n, n)
+    }
+}
+
+fn render_primitive<F1, F2>((umax, vmax): (usize, usize), pos_fn: F1, norm_fn: F2) 
 where F1: Fn(f32, f32) -> Vec3, F2: Fn(f32, f32) -> Vec3
 {
     // Grab the locks that we need.
     let g = G_STATE.lock().unwrap();
     let o = OPTIONS.lock().unwrap();
-
-    // Calculate bounds for dicing.
-    // let object_to_screen = g.object_to_screen(&o);
-
-    let (umax, vmax) = (100, 100);
 
     let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
 
@@ -770,12 +797,46 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
         )
     };
 
-    render_primitive(|u, v| -> Vec3 { radius * sphere_pos(u, v) }, sphere_pos);
+    let dice_amount = {
+        let g = G_STATE.lock().unwrap();
+        let o = OPTIONS.lock().unwrap();
+
+        let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
+        dicer.add_point(Vec3::new(radius, radius, zmax));
+        dicer.add_point(Vec3::new(radius, radius, zmin));
+        dicer.add_point(Vec3::new(radius, -radius, zmax));
+        dicer.add_point(Vec3::new(radius, -radius, zmin));
+        dicer.add_point(Vec3::new(-radius, radius, zmax));
+        dicer.add_point(Vec3::new(-radius, radius, zmin));
+        dicer.add_point(Vec3::new(-radius, -radius, zmax));
+        dicer.add_point(Vec3::new(-radius, -radius, zmin));
+
+        dicer.get_dice_rate(4)
+    };
+
+    render_primitive(dice_amount, |u, v| -> Vec3 { radius * sphere_pos(u, v) }, sphere_pos);
 }
 
 #[no_mangle]
 pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, theta_max: RtFloat) {
-    render_primitive(|u, v| -> Vec3 {
+    let dice_amount = {
+        let g = G_STATE.lock().unwrap();
+        let o = OPTIONS.lock().unwrap();
+
+        let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
+        dicer.add_point(Vec3::new(radius, radius, zmax));
+        dicer.add_point(Vec3::new(radius, radius, zmin));
+        dicer.add_point(Vec3::new(radius, -radius, zmax));
+        dicer.add_point(Vec3::new(radius, -radius, zmin));
+        dicer.add_point(Vec3::new(-radius, radius, zmax));
+        dicer.add_point(Vec3::new(-radius, radius, zmin));
+        dicer.add_point(Vec3::new(-radius, -radius, zmax));
+        dicer.add_point(Vec3::new(-radius, -radius, zmin));
+
+        dicer.get_dice_rate(4)
+    };
+
+    render_primitive(dice_amount, |u, v| -> Vec3 {
         let theta = u * theta_max.to_radians();
 
         Vec3::new(
@@ -796,7 +857,24 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
 
 #[no_mangle]
 pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
-    render_primitive(|u, v| -> Vec3 {
+    let dice_amount = {
+        let g = G_STATE.lock().unwrap();
+        let o = OPTIONS.lock().unwrap();
+
+        let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
+        dicer.add_point(Vec3::new(radius, radius, height));
+        dicer.add_point(Vec3::new(radius, radius, 0.0));
+        dicer.add_point(Vec3::new(radius, -radius, height));
+        dicer.add_point(Vec3::new(radius, -radius, 0.0));
+        dicer.add_point(Vec3::new(-radius, radius, height));
+        dicer.add_point(Vec3::new(-radius, radius, 0.0));
+        dicer.add_point(Vec3::new(-radius, -radius, height));
+        dicer.add_point(Vec3::new(-radius, -radius, 0.0));
+
+        dicer.get_dice_rate(4)
+    };
+
+    render_primitive(dice_amount, |u, v| -> Vec3 {
         let theta = u * theta_max.to_radians();
 
         Vec3::new(
@@ -817,7 +895,24 @@ pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
 
 #[no_mangle]
 pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: RtFloat, phimax: RtFloat, theta_max: RtFloat) {
-    render_primitive(|u, v| -> Vec3 {
+    let dice_amount = {
+        let g = G_STATE.lock().unwrap();
+        let o = OPTIONS.lock().unwrap();
+
+        let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
+        dicer.add_point(Vec3::new((majorradius + minorradius), (majorradius + minorradius), minorradius));
+        dicer.add_point(Vec3::new((majorradius + minorradius), (majorradius + minorradius), -minorradius));
+        dicer.add_point(Vec3::new((majorradius + minorradius), -(majorradius + minorradius), minorradius));
+        dicer.add_point(Vec3::new((majorradius + minorradius), -(majorradius + minorradius), -minorradius));
+        dicer.add_point(Vec3::new(-(majorradius + minorradius), (majorradius + minorradius), minorradius));
+        dicer.add_point(Vec3::new(-(majorradius + minorradius), (majorradius + minorradius), -minorradius));
+        dicer.add_point(Vec3::new(-(majorradius + minorradius), -(majorradius + minorradius), minorradius));
+        dicer.add_point(Vec3::new(-(majorradius + minorradius), -(majorradius + minorradius), -minorradius));
+
+        dicer.get_dice_rate(4)
+    };
+
+    render_primitive(dice_amount, |u, v| -> Vec3 {
         let (theta, phi) = (
             (u * theta_max).to_radians(),
             (phimin + v * (phimax - phimin)).to_radians(),
