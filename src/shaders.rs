@@ -16,6 +16,8 @@
 #![allow(non_snake_case)] // the shader names are the handout's
 #![allow(dead_code)] // the stubs do not read their parameter structs yet
 
+use glam::Vec3;
+
 use crate::ri::{RtFloat, RtInt, RtShaderContext, RtShaderFn};
 use std::ffi::c_void;
 
@@ -51,7 +53,8 @@ pub struct BumpParams {
 #[no_mangle]
 pub unsafe extern "C" fn CONSTANT(c: *mut RtShaderContext) {
     // TODO: copy the color and the opacity.
-    let _ = c;
+    (*c).Ci = (*c).Cs;
+    (*c).Oi = (*c).Os;
 }
 
 /* ------------------------------------------------------------- STANDARD */
@@ -67,7 +70,47 @@ pub unsafe extern "C" fn CONSTANT(c: *mut RtShaderContext) {
 #[no_mangle]
 pub unsafe extern "C" fn STANDARD(c: *mut RtShaderContext) {
     // TODO: the lighting. For now, the surface color, unlit.
-    CONSTANT(c);
+    let c_ = &*c;
+
+    let (ka, kd, ks) = (0.15, 0.95, 0.85);
+
+    struct Light {
+        pos: Vec3,
+        col: Vec3,
+        int: f32,
+    }
+
+    let lights = [
+        Light {
+            pos: Vec3::new(-6., 8., 4.),
+            col: Vec3::new(1.0, 0.95, 0.85),
+            int: 1.0,
+        },
+        Light {
+            pos: Vec3::new(7., 3., -2.),
+            col: Vec3::new(0.6, 0.7, 1.0),
+            int: 0.4,
+        },
+        Light {
+            pos: Vec3::new(0., 5., 18.),
+            col: Vec3::new(1., 1., 1.0),
+            int: 0.5,
+        },
+    ];
+
+    let mut light_color = Vec3::ZERO;
+    let mut light_intensity = Vec3::ZERO;
+    for light in lights {
+        let L = (light.pos - c_.P).normalize();
+        let V = (-c_.P).normalize();
+        let R = 2. * (c_.N.dot(L)) * c_.N - L;
+
+        light_color += light.col * (L.dot(c_.N).max(0.) * light.int);
+        light_intensity += light.col * (R.dot(V).max(0.0).powi(32) * light.int);
+    }
+
+    (*c).Ci = c_.Cs * (ka + kd * light_color) + ks * light_intensity;
+    (*c).Oi = c_.Os;
 }
 
 /* --------------------------------------------------------- CHECKERBOARD */
@@ -95,9 +138,26 @@ pub unsafe extern "C" fn STANDARD(c: *mut RtShaderContext) {
 ///         c.params = p as *const CheckerParams as *const c_void;  (put back for whoever called CHECKERBOARD)
 ///     }
 #[no_mangle]
-pub unsafe extern "C" fn CHECKERBOARD(c: *mut RtShaderContext) {
+pub extern "C" fn CHECKERBOARD(c: &mut RtShaderContext) {
     // TODO: the checks. For now, every check is lit as the light one.
-    STANDARD(c);
+    // let ctx = &mut *c;
+    let params: &CheckerParams = unsafe { &*(c.params as *const CheckerParams) };
+
+    let (i, j) = ((c.u * params.sizex as f32) as i32, (c.v * params.sizey as f32) as i32);
+
+    let light_color = (i + j) % 2 == 0;
+    c.params = if light_color {params.light_params} else {params.dark_params};
+
+    if let Some(shader_fn) = if light_color {params.light} else {params.dark} {
+        unsafe { shader_fn(c); }
+    } else {
+        let Cs = c.Cs.clone();
+        if !light_color {
+            c.Cs = Vec3::ZERO;
+        }
+        unsafe { STANDARD(c); }
+        c.Cs = Cs;
+    }
 }
 
 /* ---------------------------------------------------------- perlinNoise */
