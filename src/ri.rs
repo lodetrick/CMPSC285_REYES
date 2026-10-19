@@ -241,36 +241,36 @@ impl MicroGrid {
                 };
 
                 let vertex = self.get_vertex_mut(u, v);
+
+                let p_world = map_to_space(object_to_world, vertex.p);
                 
+                let params: *const c_void = if let Some(shader_params) = &g.shader_params {
+                    shader_params.as_ptr() as *const c_void
+                } else {
+                    ptr::null()
+                };
+
+                let mut shader_context = RtShaderContext {
+                    P: p_world,  /* position of grid vertex in camera/eye space */
+                    Po: vertex.p, /* same point in object space */
+                    N: n, /* unit normal, recomputed after displacement */
+                    u: vertex.u, /* surface parameters in [0,1], or a mesh's st */
+                    v: vertex.v,
+                    Cs: g.color, /* current RiColor and RiOpacity */
+                    Os: g.opacity,
+                    params: params,
+                    Ci: Vec3::ZERO, /* written by surface shaders */
+                    Oi: Vec3::ZERO,
+                };
+
                 if let Some(shader_fn) = g.shader_fn {
-                    let p_world = map_to_space(object_to_world, vertex.p);
-                    
-                    let params: *const c_void = if let Some(shader_params) = &g.shader_params {
-                        shader_params.as_ptr() as *const c_void
-                    } else {
-                        ptr::null()
-                    };
-
-                    let mut shader_context = RtShaderContext {
-                        P: p_world,  /* position of grid vertex in camera/eye space */
-                        Po: vertex.p, /* same point in object space */
-                        N: n, /* unit normal, recomputed after displacement */
-                        u: vertex.u, /* surface parameters in [0,1], or a mesh's st */
-                        v: vertex.v,
-                        Cs: g.color, /* current RiColor and RiOpacity */
-                        Os: g.opacity,
-                        params: params,
-                        Ci: Vec3::ZERO, /* written by surface shaders */
-                        Oi: Vec3::ZERO,
-                    };
-    
-                    unsafe {
-                        shader_fn(&mut shader_context);
-                    }
-
-                    vertex.c = shader_context.Ci;
-                    vertex.o = shader_context.Oi;
+                    unsafe { shader_fn(&mut shader_context); }
+                } else {
+                    unsafe { crate::shaders::STANDARD(&mut shader_context); }
                 }
+
+                vertex.c = shader_context.Ci;
+                vertex.o = shader_context.Oi;
             }
         }
     }
@@ -374,6 +374,8 @@ struct GraphicsState {
     camera_transform: RtMatrix,
     shader_fn: RtShaderFn,
     shader_params: Option<Arc<[u8]>>,
+    displace_fn: RtShaderFn,
+    displace_params: Option<Arc<[u8]>>,
 }
 
 impl GraphicsState {
@@ -386,6 +388,8 @@ impl GraphicsState {
             camera_transform: RtMatrix::IDENTITY,
             shader_fn: None,
             shader_params: None,
+            displace_fn: None,
+            displace_params: None,
         }
     }
 
@@ -544,8 +548,6 @@ pub extern "C" fn RiWorldBegin() {
 
 #[no_mangle]
 pub extern "C" fn RiWorldEnd() {
-    // TODO: your pixels. For now, a black, fully transparent image (or an
-    // empty depth image, +infinity everywhere).
     let (w, h, depth, xsamples, ysamples) = {
         let o = OPTIONS.lock().unwrap();
         (o.xres as usize, o.yres as usize, o.depth_display, o.xsamples, o.ysamples)
@@ -576,8 +578,6 @@ pub extern "C" fn RiWorldEnd() {
     } else {
         let mut screen_buf: Vec<RtFloat> = vec![0.; 4 * w * h];
 
-        let pixels = samples.windows_with_stride((sample_count, sample_count), (xsamples, ysamples));
-        // for (pos, pixel) in pixels.into_iter().enumerate() {
         for x in 0..w {
             for y in 0..h {
                 let pos = (x * xsamples, y * ysamples);
@@ -706,6 +706,7 @@ pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
 fn render_primitive<F>(pos_fn: F) 
 where F: Fn(f32, f32) -> Vec3
 {
+    // Grab the locks that we need.
     let g = G_STATE.lock().unwrap();
     let o = OPTIONS.lock().unwrap();
 
@@ -857,12 +858,7 @@ pub unsafe extern "C" fn RiOpacity(opacity: *const [RtFloat; 3]) {
 pub unsafe extern "C" fn RiSurface(fn_: RtShaderFn, params: *const c_void, nbytes: usize) {
     let mut g = G_STATE.lock().unwrap();
 
-    match fn_ {
-        Some(_) => { g.shader_fn = fn_ }
-        None => {
-            g.shader_fn = Some(crate::shaders::STANDARD)
-        }
-    };
+    g.shader_fn = fn_;
 
     if !params.is_null() {
         let params = std::slice::from_raw_parts(params as *const u8, nbytes);
@@ -872,7 +868,14 @@ pub unsafe extern "C" fn RiSurface(fn_: RtShaderFn, params: *const c_void, nbyte
 
 #[no_mangle]
 pub unsafe extern "C" fn RiDisplacement(fn_: RtShaderFn, params: *const c_void, nbytes: usize) {
-    let _ = (fn_, params, nbytes);
+    let mut g = G_STATE.lock().unwrap();
+
+    g.displace_fn = fn_;
+
+    if !params.is_null() {
+        let params = std::slice::from_raw_parts(params as *const u8, nbytes);
+        g.displace_params = Some(params.into());
+    }
 }
 
 /// Load an image into one of 8 texture slots with the image crate
