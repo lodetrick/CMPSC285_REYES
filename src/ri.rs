@@ -37,6 +37,7 @@ use std::ptr;
 use std::sync::{Arc, Mutex};
 
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
+use ndarray::Array2;
 
 /* ------------------------------------------------------------------ types */
 
@@ -95,7 +96,7 @@ impl<'a> Triangle<'a> {
         }
     }
 
-    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Vec<PixelSamples>, w: f32, h: f32) {
+    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Array2<Vec<Sample>>, w: f32, h: f32, xsamples: usize, ysamples: usize) {
         // Transform object coordinates to NDC coordinates
         let (p1, p2, p3) = (
             map_to_space(object_to_screen, self.v1.p),
@@ -129,15 +130,16 @@ impl<'a> Triangle<'a> {
 
         for i in x_min..x_max {
             for j in y_min..y_max {
-                let pixel_sample = &mut s[get_samples_index(i, j, w as usize)];
                 let pixel_base = Vec2::new(i as f32, j as f32);
-                let (xsamples, ysamples) = (pixel_sample.xsamples, pixel_sample.ysamples);
 
                 for s_i in 0..xsamples {
                     for s_j in 0..ysamples {
-                        let sample = &mut pixel_sample.samples[s_i + s_j * xsamples];
+                        let sample = s.get_mut((i * xsamples + s_i, j * ysamples + s_j));
 
-                        // Generate the position of the pixel
+                        // the sample doesn't exist therefore the pixel doesn't either
+                        let Some(sample) = sample else { unreachable!(); };
+
+                        // Generate the position of the pixel (0.5 jitter to start)
                         let r = pixel_base + Vec2::new(
                             (s_i as f32 + 0.5) / (xsamples as f32),
                             (s_j as f32 + 0.5) / (ysamples as f32),
@@ -156,11 +158,35 @@ impl<'a> Triangle<'a> {
                         if 0. <= w1 && w1 <= 1.
                         && 0. <= w2 && w2 <= 1.
                         && 0. <= w3 && w3 <= 1. {
-                            let depth = barycentric(w1, w2, w3, p1.z, p2.z, p3.z);
-                            if sample.depth > depth {
-                                sample.depth = depth;
-                                sample.color = barycentric_vec(w1, w2, w3, self.v1.c, self.v2.c, self.v3.c);
-                                sample.opacity = barycentric_vec(w1, w2, w3, self.v1.o, self.v2.o, self.v3.o);
+                            let hit_info = Sample {
+                                depth: barycentric(w1, w2, p1.z, p2.z, p3.z),
+                                color: barycentric_vec(w1, w2, self.v1.c, self.v2.c, self.v3.c),
+                                opacity: barycentric_vec(w1, w2, self.v1.o, self.v2.o, self.v3.o),
+                            };
+
+                            let will_truncate = hit_info.opacity.abs_diff_eq(Vec3::ONE, 1e-6);
+
+                            let mut insert_index = Some(sample.len());
+                            for i in 0..sample.len() {
+                                if sample[i].depth > hit_info.depth {
+                                    insert_index = Some(i);
+
+                                    if will_truncate {
+                                        sample.resize(i, Sample::default()); // truncate depth hits to
+                                    }
+
+                                    break;
+                                }
+
+                                // If we hit an opaque poly closer than our poly, then we can't insert.
+                                if sample[i].opacity.abs_diff_eq(Vec3::ONE, 1e-6) {
+                                    insert_index = None;
+                                    break;
+                                }
+                            }
+
+                            if let Some(insert_index) = insert_index {
+                                sample.insert(insert_index, hit_info);
                             }
                         }
                     }
@@ -170,12 +196,12 @@ impl<'a> Triangle<'a> {
     }
 }
 
-fn barycentric(alpha: f32, beta: f32, gamma: f32, v1: f32, v2: f32, v3: f32) -> f32 {
-    v1 * alpha + v2 * beta + v3 * gamma
+fn barycentric(alpha: f32, beta: f32, v1: f32, v2: f32, v3: f32) -> f32 {
+    v1 + alpha * (v2 - v1) + beta * (v3 - v1)
 }
 
-fn barycentric_vec(alpha: f32, beta: f32, gamma: f32, v1: Vec3, v2: Vec3, v3: Vec3) -> Vec3 {
-    alpha * v1 + beta * v2 + gamma * v3
+fn barycentric_vec(alpha: f32, beta: f32, v1: Vec3, v2: Vec3, v3: Vec3) -> Vec3 {
+    v1 + alpha * (v2 - v1) + beta * (v3 - v1)
 }
 
 struct MicroGrid {
@@ -251,9 +277,10 @@ impl MicroGrid {
     }
 
     fn sample(&mut self, g: &GraphicsState, o: &Options) {
-        let mut s = SAMPLE_BUF.lock().unwrap();
+        let s = &mut SAMPLE_BUF.lock().unwrap();
+        let s = s.as_mut().unwrap();
         let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
-        let (w, h) = (o.xres as f32, o.yres as f32);
+        let (w, h, xs, ys) = (o.xres as f32, o.yres as f32, o.xsamples, o.ysamples);
 
         for u in 0..self.w {
             for v in 0..self.h {
@@ -267,8 +294,8 @@ impl MicroGrid {
                     Triangle::new(v_bl, v_tr, v_br),
                 );
 
-                tri1.rasterize(object_to_screen, &mut s, w, h);
-                tri2.rasterize(object_to_screen, &mut s, w, h);
+                tri1.rasterize(object_to_screen, s, w, h, xs, ys);
+                tri2.rasterize(object_to_screen, s, w, h, xs, ys);
             }
         }
     } 
@@ -379,7 +406,7 @@ impl GraphicsState {
                 RtMatrix::from_cols_array_2d(&[
                     [2. / (r - l),0.,0.,0.], 
                     [0.,2. / (t - b),0.,0.], 
-                    [0.,0.,-2. / (f - n),0.], 
+                    [0.,0.,2. / (f - n),0.], 
                     [-((r + l) / (r - l)),-((t + b) / (t - b)),-((f + n) / (f - n)),1.],
                 ])
             }
@@ -413,37 +440,22 @@ unsafe fn token(s: *const c_char) -> &'static str {
 
 #[derive(Clone)]
 struct Sample {
-    color: RtColor,
     depth: RtFloat,
+    color: RtColor,
     opacity: RtColor,
 }
 
 impl Sample {
     fn default() -> Self {
         Sample { 
-            color: Vec3::ZERO,
             depth: f32::INFINITY, 
+            color: Vec3::ZERO,
             opacity: Vec3::ZERO,
         }
     }
 }
 
-#[derive(Clone)]
-struct PixelSamples {
-    xsamples: usize,
-    ysamples: usize,
-    samples: Vec<Sample>,
-}
-
-impl PixelSamples {
-    fn new(xsamples: usize, ysamples: usize) -> Self {
-        PixelSamples { xsamples, ysamples, samples: vec![Sample::default(); xsamples * ysamples] }
-    }
-}
-
-
-// array2<binaryheap<pixelsamples>>
-static SAMPLE_BUF: Mutex<Vec<PixelSamples>> = Mutex::new(Vec::new());
+static SAMPLE_BUF: Mutex<Option<Array2<Vec<Sample>>>> = Mutex::new(None);
 
 #[inline]
 fn get_samples_index(x: usize, y: usize, w: usize) -> usize {
@@ -523,7 +535,8 @@ pub extern "C" fn RiWorldBegin() {
     };
 
     let o = OPTIONS.lock().unwrap();
-    *SAMPLE_BUF.lock().unwrap() = vec![PixelSamples::new(o.xsamples as usize, o.ysamples as usize); w * h];
+
+    *SAMPLE_BUF.lock().unwrap() = Some(Array2::from_elem((w * o.xsamples, h * o.ysamples), Vec::new()));
 }
 
 #[no_mangle]
@@ -535,48 +548,72 @@ pub extern "C" fn RiWorldEnd() {
         (o.xres as usize, o.yres as usize, o.depth_display, o.xsamples, o.ysamples)
     };
 
-    let samples = SAMPLE_BUF.lock().unwrap();
+    let sample_count = xsamples * ysamples;
+
+    let s = &SAMPLE_BUF.lock().unwrap();
+    let samples = s.as_ref().unwrap();
     if depth {
         let mut depth_buf: Vec<RtFloat> = vec![0.; w * h];
-        for x in 0..w {
-            for y in 0..h {
-                let pos = get_samples_index(x, y, w);
 
-                let mut depth = f32::INFINITY;
-                for sample in &samples[pos].samples {
-                    if depth > sample.depth {
-                        depth = sample.depth;
+        let pixels = samples.windows_with_stride((sample_count,sample_count), (xsamples, ysamples));
+        for (pos, pixel) in pixels.into_iter().enumerate() {
+            let mut depth = f32::INFINITY;
+            for sample in pixel {
+                if let Some(closest) = sample.get(0) {
+                    if depth > closest.depth {
+                        depth = closest.depth;
                     }
                 }
-
-                depth_buf[pos] = depth;
             }
+
+            depth_buf[pos] = depth;
         }
 
         write_depth(&depth_buf);
     } else {
         let mut screen_buf: Vec<RtFloat> = vec![0.; 4 * w * h];
+
+        let pixels = samples.windows_with_stride((sample_count, sample_count), (xsamples, ysamples));
+        // for (pos, pixel) in pixels.into_iter().enumerate() {
         for x in 0..w {
             for y in 0..h {
-                let pos = get_samples_index(x, y, w);
+                let pos = (x * xsamples, y * ysamples);
 
-                let mut color = [0.0, 0.0, 0.0];
-                let mut opacity = 0.;
-                for sample in &samples[pos].samples {
-                    color[0] += sample.color[0];
-                    color[1] += sample.color[1];
-                    color[2] += sample.color[2];
-                    opacity += sample.opacity[0];
+                let mut color = Vec3::ZERO;
+                let mut opacity = Vec3::ZERO;
+                for i in 0..xsamples {
+                    for j in 0..ysamples {
+                        let sample = samples.get((pos.0 + i, pos.1 + j));
+                        let Some(sample) = sample else { unreachable!(); };
+
+                        let mut sample_color = Vec3::ZERO;
+                        let mut sample_opacity = Vec3::ZERO;
+                        for hit in sample {
+                            if sample_opacity.abs_diff_eq(Vec3::ONE, 1e-6) {
+                                break;
+                            }
+        
+                            sample_color.x += (1. - sample_opacity.x) * hit.color.x * hit.opacity.x;
+                            sample_color.y += (1. - sample_opacity.y) * hit.color.y * hit.opacity.y;
+                            sample_color.z += (1. - sample_opacity.z) * hit.color.z * hit.opacity.z;
+                            sample_opacity.x += (1. - sample_opacity.x) * hit.opacity.x;
+                            sample_opacity.y += (1. - sample_opacity.y) * hit.opacity.y;
+                            sample_opacity.z += (1. - sample_opacity.z) * hit.opacity.z;
+                        }
+        
+                        color += sample_color;
+                        opacity += sample_opacity;
+                    }
                 }
-                color[0] /= (xsamples * ysamples) as f32;
-                color[1] /= (xsamples * ysamples) as f32;
-                color[2] /= (xsamples * ysamples) as f32;
+                color /= (xsamples * ysamples) as f32;
                 opacity /= (xsamples * ysamples) as f32;
                 
-                screen_buf[4 * pos] = color[0];
-                screen_buf[4 * pos + 1] = color[1];
-                screen_buf[4 * pos + 2] = color[2];
-                screen_buf[4 * pos + 3] = opacity;
+                let pos = x + y * w;
+
+                screen_buf[4 * pos] = color.x;
+                screen_buf[4 * pos + 1] = color.y;
+                screen_buf[4 * pos + 2] = color.z;
+                screen_buf[4 * pos + 3] = opacity.max_element();
             }
         }
 
@@ -723,7 +760,7 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
     let g = G_STATE.lock().unwrap();
     let o = OPTIONS.lock().unwrap();
 
-    let (umax, vmax) = (20, 30);
+    let (umax, vmax) = (200, 300);
 
     let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
 
