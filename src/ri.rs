@@ -704,6 +704,36 @@ pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
 
 /* ---------------------------------------------------------------- primitives */
 
+fn render_primitive<F>(pos_fn: F) 
+where F: Fn(f32, f32) -> Vec3
+{
+    let g = G_STATE.lock().unwrap();
+    let o = OPTIONS.lock().unwrap();
+
+    // Calculate bounds for dicing.
+    // let object_to_screen = g.object_to_screen(&o);
+
+    let (umax, vmax) = (100, 100);
+
+    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
+
+    for _u in 0..=umax {
+        for _v in 0..=vmax {
+            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
+
+            let vert = grid.get_vertex_mut(_u, _v);
+            vert.p = pos_fn(u, v);
+            vert.c = g.color;
+            vert.o = g.opacity;
+            vert.u = u;
+            vert.v = v;
+        }
+    }
+
+    grid.shade(&g, &o);
+    grid.sample(&g, &o);
+}
+
 /// Each primitive goes through the REYES pipeline as soon as it is called:
 /// bound it, choose a dice rate from the bound's size on screen, dice it
 /// into a grid of micropolygons, shade the grid, and hand the micropolygons
@@ -718,152 +748,68 @@ pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
 /// needs the neighbors, which is why it waits for the whole first pass.
 #[no_mangle]
 pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetamax: RtFloat) {
-    let g = G_STATE.lock().unwrap();
-    let o = OPTIONS.lock().unwrap();
-
     let (phi_min, phi_max, theta_max) = (
         if zmin > -radius {f32::asin(zmin.clamp(-radius, radius) / radius)} else {f32::to_radians(-90.0)},
         if zmax < radius {f32::asin(zmax.clamp(-radius, radius) / radius)} else {f32::to_radians(90.0)},
         thetamax.to_radians()
     );
 
-    let (umax, vmax) = (20, 30);
+    render_primitive(|u, v| -> Vec3 {
+        let (phi, theta) = (
+            phi_min + v * (phi_max - phi_min),
+            u * theta_max
+        );
 
-    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
-
-    for _u in 0..=umax {
-        for _v in 0..=vmax {
-            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
-
-            let (phi, theta) = (
-                phi_min + v * (phi_max - phi_min),
-                u * theta_max
-            );
-        
-            let (x, y, z) = (
-                radius * theta.cos() * phi.cos(),
-                radius * theta.sin() * phi.cos(),
-                radius * phi.sin(),
-            );
-
-            let vert = grid.get_vertex_mut(_u, _v);
-            vert.p = Vec3::new(x, y, z);
-            vert.c = g.color;
-            vert.o = g.opacity;
-            vert.u = u;
-            vert.v = v;
-        }
-    }
-
-    grid.shade(&g, &o);
-    grid.sample(&g, &o);
+        Vec3::new(
+            radius * theta.cos() * phi.cos(),
+            radius * theta.sin() * phi.cos(),
+            radius * phi.sin(),
+        )
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, theta_max: RtFloat) {
-    let g = G_STATE.lock().unwrap();
-    let o = OPTIONS.lock().unwrap();
+    render_primitive(|u, v| -> Vec3 {
+        let theta = u * theta_max.to_radians();
 
-    let (umax, vmax) = (200, 300);
-
-    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
-
-    for _u in 0..=umax {
-        for _v in 0..=vmax {
-            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
-
-            let theta = u * theta_max.to_radians();
-        
-            let (x, y, z) = (
-                radius * theta.cos(),
-                radius * theta.sin(),
-                zmin + v * (zmax - zmin),
-            );
-
-            let vert = grid.get_vertex_mut(_u, _v);
-            vert.p = Vec3::new(x, y, z);
-            vert.c = g.color;
-            vert.o = g.opacity;
-            vert.u = u;
-            vert.v = v;
-        }
-    }
-
-    grid.shade(&g, &o);
-    grid.sample(&g, &o);
+        Vec3::new(
+            radius * theta.cos(),
+            radius * theta.sin(),
+            zmin + v * (zmax - zmin),
+        )
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
-    let g = G_STATE.lock().unwrap();
-    let o = OPTIONS.lock().unwrap();
+    render_primitive(|u, v| -> Vec3 {
+        let theta = u * theta_max.to_radians();
 
-    let (umax, vmax) = (20, 30);
-
-    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
-
-    for _u in 0..=umax {
-        for _v in 0..=vmax {
-            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
-
-            let theta = u * theta_max.to_radians();
-        
-            let (x, y, z) = (
-                radius * theta.cos() * (1. - v),
-                radius * theta.sin() * (1. - v),
-                v * height,
-            );
-
-            let vert = grid.get_vertex_mut(_u, _v);
-            vert.p = Vec3::new(x, y, z);
-            vert.c = g.color;
-            vert.o = g.opacity;
-            vert.u = u;
-            vert.v = v;
-        }
-    }
-
-    grid.shade(&g, &o);
-    grid.sample(&g, &o);
+        Vec3::new(
+            radius * theta.cos() * (1. - v),
+            radius * theta.sin() * (1. - v),
+            v * height,
+        )
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: RtFloat, phimax: RtFloat, theta_max: RtFloat) {
-    let g = G_STATE.lock().unwrap();
-    let o = OPTIONS.lock().unwrap();
+    render_primitive(|u, v| -> Vec3 {
+        let (theta, phi) = (
+            (u * theta_max).to_radians(),
+            (phimin + v * (phimax - phimin)).to_radians(),
+        );
 
-    let (umax, vmax) = (100, 200);
+        let r = minorradius * phi.cos();
 
-    let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
-
-    for _u in 0..=umax {
-        for _v in 0..=vmax {
-            let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
-
-            let (theta, phi) = (
-                (u * theta_max).to_radians(),
-                (phimin + v * (phimax - phimin)).to_radians(),
-            );
-
-            let r = minorradius * phi.cos();
-        
-            let (x, y, z) = (
-                (majorradius + r) * theta.sin(),
-                (majorradius + r) * theta.cos(),
-                minorradius * phi.sin(),
-            );
-
-            let vert = grid.get_vertex_mut(_u, _v);
-            vert.p = Vec3::new(x, y, z);
-            vert.c = g.color;
-            vert.o = g.opacity;
-            vert.u = u;
-            vert.v = v;
-        }
-    }
-
-    grid.shade(&g, &o);
-    grid.sample(&g, &o);
+        Vec3::new(
+            (majorradius + r) * theta.sin(),
+            (majorradius + r) * theta.cos(),
+            minorradius * phi.sin(),
+        )
+    });
 }
 
 /// A mesh of polygons: polygon i has nverts[i] corners, whose indices into
