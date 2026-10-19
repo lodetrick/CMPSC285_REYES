@@ -63,6 +63,7 @@ enum Projection {
 #[derive(Clone)]
 struct Vertex {
     p: Vec3,
+    ng: Vec3,
     c: RtColor,
     o: RtColor,
     u: f32,
@@ -70,9 +71,10 @@ struct Vertex {
 }
 
 impl Vertex {
-    fn new(p: Vec3, c: RtColor, o: RtColor, u: f32, v: f32) -> Self {
+    fn new(p: Vec3, ng: Vec3, c: RtColor, o: RtColor, u: f32, v: f32) -> Self {
         Vertex {
             p,
+            ng,
             c,
             o,
             u,
@@ -213,7 +215,7 @@ struct MicroGrid {
 impl MicroGrid {
     fn new(w: usize, h: usize) -> Self {
         MicroGrid {
-            vertices: vec![Vertex::new(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, 0., 0.); (w + 1) * (h + 1)],
+            vertices: vec![Vertex::new(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, 0., 0.); (w + 1) * (h + 1)],
             w,
             h,
         }
@@ -253,7 +255,7 @@ impl MicroGrid {
                 let mut shader_context = RtShaderContext {
                     P: p_world,  /* position of grid vertex in camera/eye space */
                     Po: vertex.p, /* same point in object space */
-                    N: n, /* unit normal, recomputed after displacement */
+                    N: vertex.ng, /* unit normal, recomputed after displacement */
                     u: vertex.u, /* surface parameters in [0,1], or a mesh's st */
                     v: vertex.v,
                     Cs: g.color, /* current RiColor and RiOpacity */
@@ -703,8 +705,8 @@ pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
 
 /* ---------------------------------------------------------------- primitives */
 
-fn render_primitive<F>(pos_fn: F) 
-where F: Fn(f32, f32) -> Vec3
+fn render_primitive<F1, F2>(pos_fn: F1, norm_fn: F2) 
+where F1: Fn(f32, f32) -> Vec3, F2: Fn(f32, f32) -> Vec3
 {
     // Grab the locks that we need.
     let g = G_STATE.lock().unwrap();
@@ -723,6 +725,7 @@ where F: Fn(f32, f32) -> Vec3
 
             let vert = grid.get_vertex_mut(_u, _v);
             vert.p = pos_fn(u, v);
+            vert.ng = norm_fn(u, v);
             vert.c = g.color;
             vert.o = g.opacity;
             vert.u = u;
@@ -754,18 +757,20 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
         thetamax.to_radians()
     );
 
-    render_primitive(|u, v| -> Vec3 {
+    let sphere_pos = |u: f32, v: f32| -> Vec3 {
         let (phi, theta) = (
             phi_min + v * (phi_max - phi_min),
             u * theta_max
         );
 
         Vec3::new(
-            radius * theta.cos() * phi.cos(),
-            radius * theta.sin() * phi.cos(),
-            radius * phi.sin(),
+            theta.cos() * phi.cos(),
+            theta.sin() * phi.cos(),
+            phi.sin(),
         )
-    });
+    };
+
+    render_primitive(|u, v| -> Vec3 { radius * sphere_pos(u, v) }, sphere_pos);
 }
 
 #[no_mangle]
@@ -777,6 +782,14 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
             radius * theta.cos(),
             radius * theta.sin(),
             zmin + v * (zmax - zmin),
+        )
+    }, |u, v| -> Vec3 {
+        let theta = u * theta_max.to_radians();
+
+        Vec3::new(
+            theta.cos(),
+            theta.sin(),
+            0.0,
         )
     });
 }
@@ -791,6 +804,14 @@ pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
             radius * theta.sin() * (1. - v),
             v * height,
         )
+    }, |u, v| -> Vec3 {
+        let theta = u * theta_max.to_radians();
+
+        Vec3::new(
+            height * theta.cos(),
+            height * theta.sin(),
+            radius,
+        ).normalize()
     });
 }
 
@@ -808,6 +829,17 @@ pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: Rt
             (majorradius + r) * theta.sin(),
             (majorradius + r) * theta.cos(),
             minorradius * phi.sin(),
+        )
+    }, |u, v| -> Vec3 {
+        let (theta, phi) = (
+            (u * theta_max).to_radians(),
+            (phimin + v * (phimax - phimin)).to_radians(),
+        );
+
+        Vec3::new(
+            phi.cos() * theta.sin(),
+            phi.cos() * theta.cos(),
+            phi.sin(),
         )
     });
 }
