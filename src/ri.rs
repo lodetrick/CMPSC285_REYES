@@ -228,7 +228,7 @@ impl MicroGrid {
     }
 
     fn shade(&mut self, g: &GraphicsState, o: &Options) {
-        let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
+        let object_to_screen = g.object_to_screen(&o);
         let object_to_world = g.world_to_view() * g.transformation_curr;
 
         for u in 0..=self.w {
@@ -279,7 +279,7 @@ impl MicroGrid {
     fn sample(&mut self, g: &GraphicsState, o: &Options) {
         let s = &mut SAMPLE_BUF.lock().unwrap();
         let s = s.as_mut().unwrap();
-        let object_to_screen = g.view_to_screen(&o) * g.world_to_view() * g.transformation_curr;
+        let object_to_screen = g.object_to_screen(&o);
         let (w, h, xs, ys) = (o.xres as f32, o.yres as f32, o.xsamples, o.ysamples);
 
         for u in 0..self.w {
@@ -388,6 +388,10 @@ impl GraphicsState {
             shader_fn: None,
             shader_params: None,
         }
+    }
+
+    fn object_to_screen(&self, o: &Options) -> RtMatrix {
+        self.view_to_screen(&o) * self.world_to_view() * self.transformation_curr
     }
 
     fn world_to_view(&self) -> RtMatrix {
