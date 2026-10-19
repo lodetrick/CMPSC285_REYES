@@ -228,7 +228,6 @@ impl MicroGrid {
     }
 
     fn shade(&mut self, g: &GraphicsState, o: &Options) {
-        let object_to_screen = g.object_to_screen(&o);
         let object_to_world = g.world_to_view() * g.transformation_curr;
 
         for u in 0..=self.w {
@@ -244,7 +243,7 @@ impl MicroGrid {
                 let vertex = self.get_vertex_mut(u, v);
                 
                 if let Some(shader_fn) = g.shader_fn {
-                    let p_screen = map_to_space(object_to_screen, vertex.p);
+                    let p_world = map_to_space(object_to_world, vertex.p);
                     
                     let params: *const c_void = if let Some(shader_params) = &g.shader_params {
                         shader_params.as_ptr() as *const c_void
@@ -253,7 +252,7 @@ impl MicroGrid {
                     };
 
                     let mut shader_context = RtShaderContext {
-                        P: p_screen,
+                        P: p_world,  /* position of grid vertex in camera/eye space */
                         Po: vertex.p, /* same point in object space */
                         N: n, /* unit normal, recomputed after displacement */
                         u: vertex.u, /* surface parameters in [0,1], or a mesh's st */
