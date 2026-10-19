@@ -155,13 +155,13 @@ impl<'a> Triangle<'a> {
                             (r-r1).perp_dot(r1-r2) / tri_area,
                         );
         
-                        if 0. <= w1 && w1 <= 1.
-                        && 0. <= w2 && w2 <= 1.
-                        && 0. <= w3 && w3 <= 1. {
+                        if 0. <= w1 && w1 < 1.
+                        && 0. <= w2 && w2 < 1.
+                        && 0. <= w3 && w3 < 1. {
                             let hit_info = Sample {
-                                depth: barycentric(w1, w2, p1.z, p2.z, p3.z),
-                                color: barycentric_vec(w1, w2, self.v1.c, self.v2.c, self.v3.c),
-                                opacity: barycentric_vec(w1, w2, self.v1.o, self.v2.o, self.v3.o),
+                                depth: barycentric(w2, w3, p1.z, p2.z, p3.z),
+                                color: barycentric_vec(w2, w3, self.v1.c, self.v2.c, self.v3.c),
+                                opacity: barycentric_vec(w2, w3, self.v1.o, self.v2.o, self.v3.o),
                             };
 
                             let will_truncate = hit_info.opacity.abs_diff_eq(Vec3::ONE, 1e-6);
@@ -196,12 +196,12 @@ impl<'a> Triangle<'a> {
     }
 }
 
-fn barycentric(alpha: f32, beta: f32, v1: f32, v2: f32, v3: f32) -> f32 {
-    v1 + alpha * (v2 - v1) + beta * (v3 - v1)
+fn barycentric(beta: f32, gamma: f32, v1: f32, v2: f32, v3: f32) -> f32 {
+    v1 + beta * (v2 - v1) + gamma * (v3 - v1)
 }
 
-fn barycentric_vec(alpha: f32, beta: f32, v1: Vec3, v2: Vec3, v3: Vec3) -> Vec3 {
-    v1 + alpha * (v2 - v1) + beta * (v3 - v1)
+fn barycentric_vec(beta: f32, gamma: f32, v1: Vec3, v2: Vec3, v3: Vec3) -> Vec3 {
+    v1 + beta * (v2 - v1) + gamma * (v3 - v1)
 }
 
 struct MicroGrid {
