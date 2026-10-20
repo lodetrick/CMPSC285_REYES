@@ -16,7 +16,7 @@
 #![allow(non_snake_case)] // the shader names are the handout's
 #![allow(dead_code)] // the stubs do not read their parameter structs yet
 
-use glam::{FloatExt, Vec3};
+use glam::Vec3;
 
 use crate::ri::{RtFloat, RtInt, RtShaderContext, RtShaderFn};
 use std::ffi::c_void;
@@ -135,8 +135,6 @@ pub unsafe extern "C" fn STANDARD(c: &mut RtShaderContext) {
 ///     }
 #[no_mangle]
 pub extern "C" fn CHECKERBOARD(c: &mut RtShaderContext) {
-    // TODO: the checks. For now, every check is lit as the light one.
-    // let ctx = &mut *c;
     let params: &CheckerParams = unsafe { &*(c.params as *const CheckerParams) };
 
     let (i, j) = (
