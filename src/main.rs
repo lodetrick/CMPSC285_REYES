@@ -22,9 +22,9 @@ use std::path::Path;
 /// One entry of the scene table (scenes.h's RtSceneEntry, same layout).
 #[repr(C)]
 struct RtSceneEntry {
-    name: *const c_char,                    /* what you type: e.g., reyes QuadricZoo */
+    name: *const c_char, /* what you type: e.g., reyes QuadricZoo */
     function: Option<unsafe extern "C" fn()>, /* the scene's entry point */
-    tier: *const c_char,                    /* "test", "intermediate" or "cinematic" */
+    tier: *const c_char, /* "test", "intermediate" or "cinematic" */
 }
 
 extern "C" {
@@ -81,7 +81,11 @@ fn usage(scenes: &[Scene]) {
             tier = s.tier;
             eprintln!("{} scenes:", tier);
         }
-        eprintln!("  {}{}", s.name, if is_movie(s.name) { " (movie)" } else { "" });
+        eprintln!(
+            "  {}{}",
+            s.name,
+            if is_movie(s.name) { " (movie)" } else { "" }
+        );
     }
 }
 
@@ -89,7 +93,11 @@ fn usage(scenes: &[Scene]) {
 /// lands in renders/1_TestScenes/UVTest.png. The folders are made here, so a
 /// renderer only ever has to write a file.
 fn make_render_folders() {
-    for folder in ["renders/1_TestScenes", "renders/2_IntermediateScenes", "renders/3_CinematicScenes"] {
+    for folder in [
+        "renders/1_TestScenes",
+        "renders/2_IntermediateScenes",
+        "renders/3_CinematicScenes",
+    ] {
         let _ = std::fs::create_dir_all(folder);
     }
 }

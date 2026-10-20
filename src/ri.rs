@@ -1,3 +1,13 @@
+//! TODO:
+//!
+//! 3. Displacement
+//! 5. Check Transparency
+//! 6. Lights coming from weird positions - partially solved
+//! 7. Extra Credit Ideas?
+//! 8. Original Scene?
+//! 10. Perspective-Correct Interpolating
+//!
+
 //! ri.rs: the HW1 RenderMan-like interface (include/Ri.h) in Rust, and the
 //! renderer behind it.
 //!
@@ -40,6 +50,7 @@ use glam::{FloatExt, Mat4, Vec2, Vec3, Vec4Swizzles};
 use image::{DynamicImage, GenericImageView, ImageReader};
 use ndarray::Array2;
 use rand::{RngExt, SeedableRng};
+use rayon::prelude::*;
 
 /* ------------------------------------------------------------------ types */
 
@@ -59,7 +70,7 @@ pub const RI_ORTHOGRAPHIC: &str = "orthographic";
 
 enum Projection {
     Orthographic,
-    Perspective {fov: f32}
+    Perspective { fov: f32 },
 }
 
 #[derive(Clone)]
@@ -74,14 +85,7 @@ struct Vertex {
 
 impl Vertex {
     fn new(p: Vec3, ng: Vec3, c: RtColor, o: RtColor, u: f32, v: f32) -> Self {
-        Vertex {
-            p,
-            ng,
-            c,
-            o,
-            u,
-            v,
-        }
+        Vertex { p, ng, c, o, u, v }
     }
 }
 
@@ -93,21 +97,25 @@ struct Triangle<'a> {
 
 impl<'a> Triangle<'a> {
     fn new(v1: &'a Vertex, v2: &'a Vertex, v3: &'a Vertex) -> Self {
-        Triangle {
-            v1,
-            v2,
-            v3,
-        }
+        Triangle { v1, v2, v3 }
     }
 
-    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Array2<SampleGroup>, w: f32, h: f32, xsamples: usize, ysamples: usize) {
+    fn rasterize(
+        &self,
+        object_to_screen: RtMatrix,
+        s: &mut Array2<SampleGroup>,
+        w: f32,
+        h: f32,
+        xsamples: usize,
+        ysamples: usize,
+    ) {
         // Transform object coordinates to NDC coordinates
         let (p1, p2, p3) = (
             map_to_space(object_to_screen, self.v1.p),
             map_to_space(object_to_screen, self.v2.p),
             map_to_space(object_to_screen, self.v3.p),
         );
-        
+
         let (r1, r2, r3) = (
             Vec2::new((p1.x + 1.) * 0.5 * w, (1. - p1.y) * 0.5 * h),
             Vec2::new((p2.x + 1.) * 0.5 * w, (1. - p2.y) * 0.5 * h),
@@ -123,7 +131,15 @@ impl<'a> Triangle<'a> {
         );
 
         // Don't render tris outside of the screen.
-        if x_max < 0. || x_min > w || y_max < 0. || y_min > h { return; }
+        if x_max < 0. || x_min > w || y_max < 0. || y_min > h {
+            return;
+        }
+
+        if x_min < 1. {
+            // println!("{x_min} {x_max} {y_min} {y_max} ({} {} {})", self.v1.p, p1, r1);
+            // println!("{x_min} {x_max} {y_min} {y_max} ({} {} {})", self.v2.p, p2, r2);
+            // println!("{x_min} {x_max} {y_min} {y_max} ({} {} {})", self.v3.p, p3, r3);
+        }
 
         let (x_min, x_max, y_min, y_max) = (
             (x_min.floor() - 1.).max(0.0) as usize,
@@ -141,27 +157,30 @@ impl<'a> Triangle<'a> {
                         let sample = s.get_mut((i * xsamples + s_i, j * ysamples + s_j));
 
                         // the sample doesn't exist therefore the pixel doesn't either
-                        let Some(sample) = sample else { unreachable!(); };
+                        let Some(sample) = sample else {
+                            unreachable!();
+                        };
 
                         // Generate the position of the pixel (0.5 jitter to start)
-                        let r = pixel_base + Vec2::new(
-                            (s_i as f32 + sample.jitter.x) / (xsamples as f32),
-                            (s_j as f32 + sample.jitter.y) / (ysamples as f32),
-                        );
+                        let r = pixel_base
+                            + Vec2::new(
+                                (s_i as f32 + sample.jitter.x) / (xsamples as f32),
+                                (s_j as f32 + sample.jitter.y) / (ysamples as f32),
+                            );
 
-                        let tri_area = (r1-r3).perp_dot(r2-r3);
+                        let tri_area = (r1 - r3).perp_dot(r2 - r3);
 
-                        if tri_area.abs() < 1e-8 { continue; }
-        
+                        if tri_area.abs() < 1e-8 {
+                            continue;
+                        }
+
                         let (w1, w2, w3) = (
-                            (r-r3).perp_dot(r2-r3) / tri_area,
-                            (r-r3).perp_dot(r3-r1) / tri_area,
-                            (r-r1).perp_dot(r1-r2) / tri_area,
+                            (r - r3).perp_dot(r2 - r3) / tri_area,
+                            (r - r3).perp_dot(r3 - r1) / tri_area,
+                            (r - r1).perp_dot(r1 - r2) / tri_area,
                         );
-        
-                        if 0. <= w1 && w1 < 1.
-                        && 0. <= w2 && w2 < 1.
-                        && 0. <= w3 && w3 < 1. {
+
+                        if 0. <= w1 && w1 < 1. && 0. <= w2 && w2 < 1. && 0. <= w3 && w3 < 1. {
                             let hit_info = Sample {
                                 depth: barycentric(w2, w3, p1.z, p2.z, p3.z),
                                 color: barycentric_vec(w2, w3, self.v1.c, self.v2.c, self.v3.c),
@@ -176,7 +195,8 @@ impl<'a> Triangle<'a> {
                                     insert_index = Some(i);
 
                                     if will_truncate {
-                                        sample.depths.resize(i, Sample::default()); // truncate depth hits to
+                                        sample.depths.resize(i, Sample::default());
+                                        // truncate depth hits to
                                     }
 
                                     break;
@@ -211,13 +231,16 @@ fn barycentric_vec(beta: f32, gamma: f32, v1: Vec3, v2: Vec3, v3: Vec3) -> Vec3 
 struct MicroGrid {
     vertices: Vec<Vertex>,
     w: usize,
-    h: usize
+    h: usize,
 }
 
 impl MicroGrid {
     fn new(w: usize, h: usize) -> Self {
         MicroGrid {
-            vertices: vec![Vertex::new(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, 0., 0.); (w + 1) * (h + 1)],
+            vertices: vec![
+                Vertex::new(Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, 0., 0.);
+                (w + 1) * (h + 1)
+            ],
             w,
             h,
         }
@@ -236,20 +259,12 @@ impl MicroGrid {
 
         for u in 0..=self.w {
             for v in 0..=self.h {
-
-                let n = {
-                    let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
-                    let p2_w = map_to_space(object_to_world, self.get_vertex(if u == self.w {u - 1} else {u + 1}, v).p);
-                    let p3_w = map_to_space(object_to_world, self.get_vertex(u, if v == self.h {v - 1} else {v + 1}).p);
-                    (p1_w - p2_w).cross(p1_w - p3_w).normalize()
-                };
-
                 let vertex = self.get_vertex_mut(u, v);
 
                 let p_world = map_to_space(object_to_world, vertex.p);
-                
-                let params: *const c_void = if let Some(shader_params) = &g.shader_params {
-                    shader_params.as_ptr() as *const c_void
+
+                let params: *const c_void = if let Some(displace_params) = &g.displace_params {
+                    displace_params.as_ptr() as *const c_void
                 } else {
                     ptr::null()
                 };
@@ -258,10 +273,10 @@ impl MicroGrid {
                 let n = (n.xyz() / n.w).normalize();
 
                 let mut shader_context = RtShaderContext {
-                    P: p_world,  /* position of grid vertex in camera/eye space */
+                    P: p_world,   /* position of grid vertex in camera/eye space */
                     Po: vertex.p, /* same point in object space */
-                    N: n, /* unit normal, recomputed after displacement */
-                    u: vertex.u, /* surface parameters in [0,1], or a mesh's st */
+                    N: n,         /* unit normal, recomputed after displacement */
+                    u: vertex.u,  /* surface parameters in [0,1], or a mesh's st */
                     v: vertex.v,
                     Cs: g.color, /* current RiColor and RiOpacity */
                     Os: g.opacity,
@@ -270,10 +285,37 @@ impl MicroGrid {
                     Oi: Vec3::ZERO,
                 };
 
-                if let Some(shader_fn) = g.shader_fn {
-                    unsafe { shader_fn(&mut shader_context); }
+                if let Some(displace_fn) = g.displace_fn {
+                    unsafe {
+                        displace_fn(&mut shader_context);
+                    }
+                }
+                //     }
+                // }
+
+                // for u in 0..=self.w {
+                //     for v in 0..=self.h {
+                // shader_context.N = {
+                //     let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
+                //     let p2_w = map_to_space(object_to_world, self.get_vertex(if u == self.w {u - 1} else {u + 1}, v).p);
+                //     let p3_w = map_to_space(object_to_world, self.get_vertex(u, if v == self.h {v - 1} else {v + 1}).p);
+                //     (p1_w - p2_w).cross(p1_w - p3_w).normalize()
+                // };
+
+                shader_context.params = if let Some(shader_params) = &g.shader_params {
+                    shader_params.as_ptr() as *const c_void
                 } else {
-                    unsafe { crate::shaders::STANDARD(&mut shader_context); }
+                    ptr::null()
+                };
+
+                if let Some(shader_fn) = g.shader_fn {
+                    unsafe {
+                        shader_fn(&mut shader_context);
+                    }
+                } else {
+                    unsafe {
+                        crate::shaders::STANDARD(&mut shader_context);
+                    }
                 }
 
                 vertex.c = shader_context.Ci;
@@ -284,7 +326,12 @@ impl MicroGrid {
 
     fn sample(&mut self, g: &GraphicsState, o: &Options) {
         let s = &mut SAMPLE_BUF.lock().unwrap();
-        let s = s.as_mut().unwrap();
+        let s: &mut ndarray::prelude::ArrayBase<
+            ndarray::OwnedRepr<SampleGroup>,
+            ndarray::prelude::Dim<[usize; 2]>,
+            SampleGroup,
+        > = s.as_mut().unwrap();
+        let object_to_world = g.object_to_world();
         let object_to_screen = g.object_to_screen(&o);
         let (w, h, xs, ys) = (o.xres as f32, o.yres as f32, o.xsamples, o.ysamples);
 
@@ -300,11 +347,23 @@ impl MicroGrid {
                     Triangle::new(v_bl, v_tr, v_br),
                 );
 
-                tri1.rasterize(object_to_screen, s, w, h, xs, ys);
-                tri2.rasterize(object_to_screen, s, w, h, xs, ys);
+                let z_tl = map_to_space(object_to_world, v_tl.p).z;
+                let z_tr = map_to_space(object_to_world, v_tr.p).z;
+                let z_bl = map_to_space(object_to_world, v_bl.p).z;
+                let z_br = map_to_space(object_to_world, v_br.p).z;
+
+                // println!("{z_tl} {z_tr} {z_bl} {z_br}");
+
+                if z_tl.min(z_tr.min(z_bl)) > 0.01 {
+                    tri1.rasterize(object_to_screen, s, w, h, xs, ys);
+                }
+
+                if z_bl.min(z_tl.min(z_br)) > 0.01 {
+                    tri2.rasterize(object_to_screen, s, w, h, xs, ys);
+                }
             }
         }
-    } 
+    }
 }
 
 /// What a shader sees at one grid vertex (Ri.h's RtShaderContext, same
@@ -313,16 +372,16 @@ impl MicroGrid {
 #[repr(C)]
 pub struct RtShaderContext {
     /* inputs, filled by the renderer at each grid vertex */
-    pub P: RtPoint,          /* position of grid vertex in camera/eye space */
-    pub Po: RtPoint,         /* same point in object space */
-    pub N: RtNormal,         /* unit normal, recomputed after displacement */
-    pub u: RtFloat,          /* surface parameters in [0,1], or a mesh's st */
+    pub P: RtPoint,  /* position of grid vertex in camera/eye space */
+    pub Po: RtPoint, /* same point in object space */
+    pub N: RtNormal, /* unit normal, recomputed after displacement */
+    pub u: RtFloat,  /* surface parameters in [0,1], or a mesh's st */
     pub v: RtFloat,
-    pub Cs: RtColor,         /* current RiColor and RiOpacity */
+    pub Cs: RtColor, /* current RiColor and RiOpacity */
     pub Os: RtColor,
     pub params: *const c_void, /* this shader's parameter block, or null */
     /* outputs */
-    pub Ci: RtColor,         /* written by surface shaders */
+    pub Ci: RtColor, /* written by surface shaders */
     pub Oi: RtColor,
     /* displacement shaders modify P in place */
 }
@@ -354,7 +413,7 @@ struct Options {
     ysamples: usize,
     display: String,
     depth_display: bool, /* RiDisplay(name, "zfile", "z") */
-    projection: Projection
+    projection: Projection,
 }
 
 impl Options {
@@ -366,7 +425,7 @@ impl Options {
             ysamples: 2,
             display: String::new(),
             depth_display: false,
-            projection: Projection::Orthographic
+            projection: Projection::Orthographic,
         }
     }
 }
@@ -404,6 +463,10 @@ impl GraphicsState {
         self.view_to_screen(&o) * self.world_to_view() * self.transformation_curr
     }
 
+    fn object_to_world(&self) -> RtMatrix {
+        self.world_to_view() * self.transformation_curr
+    }
+
     fn world_to_view(&self) -> RtMatrix {
         self.camera_transform.inverse()
     }
@@ -414,27 +477,44 @@ impl GraphicsState {
 
         match o.projection {
             Projection::Orthographic => {
-                let (l, r) = if aspect >= 1. { (-aspect, aspect) } else { (-1.,1.) };
-                let (t, b) = if aspect >= 1. { (-1., 1.) } else { (-1. / aspect, 1. / aspect) };
+                let (l, r) = if aspect >= 1. {
+                    (-aspect, aspect)
+                } else {
+                    (-1., 1.)
+                };
+                let (t, b) = if aspect >= 1. {
+                    (-1., 1.)
+                } else {
+                    (-1. / aspect, 1. / aspect)
+                };
 
                 RtMatrix::from_cols_array_2d(&[
-                    [2. / (r - l),0.,0.,0.], 
-                    [0.,2. / (t - b),0.,0.], 
-                    [0.,0.,2. / (f - n),0.], 
-                    [-((r + l) / (r - l)),-((t + b) / (t - b)),-((f + n) / (f - n)),1.],
+                    [2. / (r - l), 0., 0., 0.],
+                    [0., 2. / (t - b), 0., 0.],
+                    [0., 0., 2. / (f - n), 0.],
+                    [
+                        -((r + l) / (r - l)),
+                        -((t + b) / (t - b)),
+                        -((f + n) / (f - n)),
+                        1.,
+                    ],
                 ])
             }
 
             Projection::Perspective { fov } => {
                 let cot = 1. / (fov * 0.5).tan();
 
-                let (sx, sy) = if aspect >= 1. { (cot / aspect, cot) } else { (cot, cot * aspect) };
+                let (sx, sy) = if aspect >= 1. {
+                    (cot / aspect, cot)
+                } else {
+                    (cot, cot * aspect)
+                };
 
                 RtMatrix::from_cols_array_2d(&[
-                    [sx,0.,0.,0.],
-                    [0.,sy,0.,0.],
-                    [0.,0.,f / (f - n),1.],
-                    [0.,0.,(- f * n / (f - n)),0.],
+                    [sx, 0., 0., 0.],
+                    [0., sy, 0., 0.],
+                    [0., 0., f / (f - n), 1.],
+                    [0., 0., (-f * n / (f - n)), 0.],
                 ])
             }
         }
@@ -461,8 +541,8 @@ struct Sample {
 
 impl Sample {
     fn default() -> Self {
-        Sample { 
-            depth: f32::INFINITY, 
+        Sample {
+            depth: f32::INFINITY,
             color: Vec3::ZERO,
             opacity: Vec3::ZERO,
         }
@@ -477,7 +557,10 @@ struct SampleGroup {
 
 impl SampleGroup {
     fn new() -> Self {
-        SampleGroup { jitter: Vec2::new(0.5, 0.5), depths: Vec::new() }
+        SampleGroup {
+            jitter: Vec2::new(0.5, 0.5),
+            depths: Vec::new(),
+        }
     }
 }
 
@@ -564,13 +647,16 @@ pub extern "C" fn RiWorldBegin() {
 
     let o = OPTIONS.lock().unwrap();
 
-    *SAMPLE_BUF.lock().unwrap() = Some(Array2::from_elem((w * o.xsamples, h * o.ysamples), SampleGroup::new()));
+    *SAMPLE_BUF.lock().unwrap() = Some(Array2::from_elem(
+        (w * o.xsamples, h * o.ysamples),
+        SampleGroup::new(),
+    ));
 
     let s = &mut SAMPLE_BUF.lock().unwrap();
     let s = s.as_mut().unwrap();
-    
+
     let mut r = rand::rngs::SmallRng::seed_from_u64(42);
-    
+
     for sample_group in s {
         sample_group.jitter = Vec2::new(r.random_range(0.0..=1.0), r.random_range(0.0..=1.0))
     }
@@ -580,7 +666,13 @@ pub extern "C" fn RiWorldBegin() {
 pub extern "C" fn RiWorldEnd() {
     let (w, h, depth, xsamples, ysamples) = {
         let o = OPTIONS.lock().unwrap();
-        (o.xres as usize, o.yres as usize, o.depth_display, o.xsamples, o.ysamples)
+        (
+            o.xres as usize,
+            o.yres as usize,
+            o.depth_display,
+            o.xsamples,
+            o.ysamples,
+        )
     };
 
     let sample_count = xsamples * ysamples;
@@ -588,9 +680,11 @@ pub extern "C" fn RiWorldEnd() {
     let s = &SAMPLE_BUF.lock().unwrap();
     let samples = s.as_ref().unwrap();
     if depth {
+        println!("Saving Depth");
         let mut depth_buf: Vec<RtFloat> = vec![0.; w * h];
 
-        let pixels = samples.windows_with_stride((sample_count,sample_count), (xsamples, ysamples));
+        let pixels =
+            samples.windows_with_stride((sample_count, sample_count), (xsamples, ysamples));
         for (pos, pixel) in pixels.into_iter().enumerate() {
             let mut depth = f32::INFINITY;
             for sample in pixel {
@@ -617,7 +711,9 @@ pub extern "C" fn RiWorldEnd() {
                 for i in 0..xsamples {
                     for j in 0..ysamples {
                         let sample = samples.get((pos.0 + i, pos.1 + j));
-                        let Some(sample) = sample else { unreachable!(); };
+                        let Some(sample) = sample else {
+                            unreachable!();
+                        };
 
                         let mut sample_color = Vec3::ZERO;
                         let mut sample_opacity = Vec3::ZERO;
@@ -625,7 +721,7 @@ pub extern "C" fn RiWorldEnd() {
                             if sample_opacity.abs_diff_eq(Vec3::ONE, 1e-6) {
                                 break;
                             }
-        
+
                             sample_color.x += (1. - sample_opacity.x) * hit.color.x * hit.opacity.x;
                             sample_color.y += (1. - sample_opacity.y) * hit.color.y * hit.opacity.y;
                             sample_color.z += (1. - sample_opacity.z) * hit.color.z * hit.opacity.z;
@@ -633,14 +729,14 @@ pub extern "C" fn RiWorldEnd() {
                             sample_opacity.y += (1. - sample_opacity.y) * hit.opacity.y;
                             sample_opacity.z += (1. - sample_opacity.z) * hit.opacity.z;
                         }
-        
+
                         color += sample_color;
                         opacity += sample_opacity;
                     }
                 }
                 color /= (xsamples * ysamples) as f32;
                 opacity /= (xsamples * ysamples) as f32;
-                
+
                 let pos = x + y * w;
 
                 screen_buf[4 * pos] = color.x;
@@ -664,12 +760,16 @@ pub unsafe extern "C" fn RiProjection(p_name: RtToken, _p_token: RtToken, p_valu
     let mut o = OPTIONS.lock().unwrap();
     match token(p_name) {
         RI_PERSPECTIVE => {
-            o.projection = Projection::Perspective { fov: (*(p_value as *const f32)).to_radians() }
+            o.projection = Projection::Perspective {
+                fov: (*(p_value as *const f32)).to_radians(),
+            }
         }
-        RI_ORTHOGRAPHIC => { o.projection = Projection::Orthographic; }
-        err => panic!("Invalid Projection: {err}")
+        RI_ORTHOGRAPHIC => {
+            o.projection = Projection::Orthographic;
+        }
+        err => panic!("Invalid Projection: {err}"),
     };
-    
+
     let mut g = G_STATE.lock().unwrap();
     g.transformation_curr = RtMatrix::IDENTITY;
     g.transformation_stack.clear();
@@ -715,7 +815,8 @@ pub extern "C" fn RiTranslate(dx: RtFloat, dy: RtFloat, dz: RtFloat) {
 #[no_mangle]
 pub extern "C" fn RiRotate(theta: RtFloat, dx: RtFloat, dy: RtFloat, dz: RtFloat) {
     let mut o = G_STATE.lock().unwrap();
-    let rotate_transform = RtMatrix::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta.to_radians());
+    let rotate_transform =
+        RtMatrix::from_axis_angle(Vec3::new(dx, dy, dz).normalize(), theta.to_radians());
     o.transformation_curr *= rotate_transform
 }
 
@@ -728,7 +829,8 @@ pub extern "C" fn RiScale(sx: RtFloat, sy: RtFloat, sz: RtFloat) {
 
 pub fn RiApplyTransform(px: RtFloat, py: RtFloat, pz: RtFloat) -> RtVector {
     let o = G_STATE.lock().unwrap();
-    o.transformation_curr.transform_point3(Vec3::new(px, py, pz))
+    o.transformation_curr
+        .transform_point3(Vec3::new(px, py, pz))
 }
 
 /* ---------------------------------------------------------------- primitives */
@@ -745,7 +847,15 @@ struct Dicer {
 
 impl Dicer {
     fn new(obj_to_screen: RtMatrix, w: f32, h: f32) -> Self {
-        Dicer { x_min: f32::INFINITY, x_max: 0.0, y_min: f32::INFINITY, y_max: 0.0, obj_to_screen, w, h }
+        Dicer {
+            x_min: f32::INFINITY,
+            x_max: 0.0,
+            y_min: f32::INFINITY,
+            y_max: 0.0,
+            obj_to_screen,
+            w,
+            h,
+        }
     }
 
     fn add_point(&mut self, p: Vec3) {
@@ -761,12 +871,15 @@ impl Dicer {
     fn get_dice_rate(&self, clamp_min: usize) -> (usize, usize) {
         let diag = Vec2::new(self.x_max - self.x_min, self.y_max - self.y_min).length();
         let n = ((2.0 * diag).round() as usize).clamp(clamp_min, 1024);
+        println!("Dice rate: {n}");
         (n, n)
     }
 }
 
-fn render_primitive<F1, F2>((umax, vmax): (usize, usize), pos_fn: F1, norm_fn: F2) 
-where F1: Fn(f32, f32) -> Vec3, F2: Fn(f32, f32) -> Vec3
+fn render_primitive<F1, F2>((umax, vmax): (usize, usize), pos_fn: F1, norm_fn: F2)
+where
+    F1: Fn(f32, f32) -> Vec3,
+    F2: Fn(f32, f32) -> Vec3,
 {
     // Grab the locks that we need.
     let g = G_STATE.lock().unwrap();
@@ -806,23 +919,25 @@ where F1: Fn(f32, f32) -> Vec3, F2: Fn(f32, f32) -> Vec3
 /// needs the neighbors, which is why it waits for the whole first pass.
 #[no_mangle]
 pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetamax: RtFloat) {
+    println!("making a sphere");
     let (phi_min, phi_max, theta_max) = (
-        if zmin > -radius {f32::asin(zmin.clamp(-radius, radius) / radius)} else {f32::to_radians(-90.0)},
-        if zmax < radius {f32::asin(zmax.clamp(-radius, radius) / radius)} else {f32::to_radians(90.0)},
-        thetamax.to_radians()
+        if zmin > -radius {
+            f32::asin(zmin.clamp(-radius, radius) / radius)
+        } else {
+            f32::to_radians(-90.0)
+        },
+        if zmax < radius {
+            f32::asin(zmax.clamp(-radius, radius) / radius)
+        } else {
+            f32::to_radians(90.0)
+        },
+        thetamax.to_radians(),
     );
 
     let sphere_pos = |u: f32, v: f32| -> Vec3 {
-        let (phi, theta) = (
-            phi_min + v * (phi_max - phi_min),
-            u * theta_max
-        );
+        let (phi, theta) = (phi_min + v * (phi_max - phi_min), u * theta_max);
 
-        Vec3::new(
-            theta.cos() * phi.cos(),
-            theta.sin() * phi.cos(),
-            phi.sin(),
-        )
+        Vec3::new(theta.cos() * phi.cos(), theta.sin() * phi.cos(), phi.sin())
     };
 
     let dice_amount = {
@@ -842,11 +957,16 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
         dicer.get_dice_rate(4)
     };
 
-    render_primitive(dice_amount, |u, v| -> Vec3 { radius * sphere_pos(u, v) }, sphere_pos);
+    render_primitive(
+        dice_amount,
+        |u, v| -> Vec3 { radius * sphere_pos(u, v) },
+        sphere_pos,
+    );
 }
 
 #[no_mangle]
 pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, theta_max: RtFloat) {
+    println!("making a cylinder");
     let dice_amount = {
         let g = G_STATE.lock().unwrap();
         let o = OPTIONS.lock().unwrap();
@@ -864,27 +984,28 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
         dicer.get_dice_rate(4)
     };
 
-    render_primitive(dice_amount, |u, v| -> Vec3 {
-        let theta = u * theta_max.to_radians();
+    render_primitive(
+        dice_amount,
+        |u, v| -> Vec3 {
+            let theta = u * theta_max.to_radians();
 
-        Vec3::new(
-            radius * theta.cos(),
-            radius * theta.sin(),
-            zmin + v * (zmax - zmin),
-        )
-    }, |u, _v| -> Vec3 {
-        let theta = u * theta_max.to_radians();
+            Vec3::new(
+                radius * theta.cos(),
+                radius * theta.sin(),
+                zmin + v * (zmax - zmin),
+            )
+        },
+        |u, _v| -> Vec3 {
+            let theta = u * theta_max.to_radians();
 
-        Vec3::new(
-            theta.cos(),
-            theta.sin(),
-            0.0,
-        )
-    });
+            Vec3::new(theta.cos(), theta.sin(), 0.0)
+        },
+    );
 }
 
 #[no_mangle]
 pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
+    println!("making a cone");
     let dice_amount = {
         let g = G_STATE.lock().unwrap();
         let o = OPTIONS.lock().unwrap();
@@ -902,69 +1023,108 @@ pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
         dicer.get_dice_rate(4)
     };
 
-    render_primitive(dice_amount, |u, v| -> Vec3 {
-        let theta = u * theta_max.to_radians();
+    render_primitive(
+        dice_amount,
+        |u, v| -> Vec3 {
+            let theta = u * theta_max.to_radians();
 
-        Vec3::new(
-            radius * theta.cos() * (1. - v),
-            radius * theta.sin() * (1. - v),
-            v * height,
-        )
-    }, |u, _v| -> Vec3 {
-        let theta = u * theta_max.to_radians();
+            Vec3::new(
+                radius * theta.cos() * (1. - v),
+                radius * theta.sin() * (1. - v),
+                v * height,
+            )
+        },
+        |u, _v| -> Vec3 {
+            let theta = u * theta_max.to_radians();
 
-        Vec3::new(
-            height * theta.cos(),
-            height * theta.sin(),
-            radius,
-        ).normalize()
-    });
+            Vec3::new(height * theta.cos(), height * theta.sin(), radius).normalize()
+        },
+    );
 }
 
 #[no_mangle]
-pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: RtFloat, phimax: RtFloat, theta_max: RtFloat) {
+pub extern "C" fn RiTorus(
+    majorradius: RtFloat,
+    minorradius: RtFloat,
+    phimin: RtFloat,
+    phimax: RtFloat,
+    theta_max: RtFloat,
+) {
+    println!("making a torus");
     let dice_amount = {
         let g = G_STATE.lock().unwrap();
         let o = OPTIONS.lock().unwrap();
 
         let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
-        dicer.add_point(Vec3::new(majorradius + minorradius, majorradius + minorradius, minorradius));
-        dicer.add_point(Vec3::new(majorradius + minorradius, majorradius + minorradius, -minorradius));
-        dicer.add_point(Vec3::new(majorradius + minorradius, -(majorradius + minorradius), minorradius));
-        dicer.add_point(Vec3::new(majorradius + minorradius, -(majorradius + minorradius), -minorradius));
-        dicer.add_point(Vec3::new(-(majorradius + minorradius), majorradius + minorradius, minorradius));
-        dicer.add_point(Vec3::new(-(majorradius + minorradius), majorradius + minorradius, -minorradius));
-        dicer.add_point(Vec3::new(-(majorradius + minorradius), -(majorradius + minorradius), minorradius));
-        dicer.add_point(Vec3::new(-(majorradius + minorradius), -(majorradius + minorradius), -minorradius));
+        dicer.add_point(Vec3::new(
+            majorradius + minorradius,
+            majorradius + minorradius,
+            minorradius,
+        ));
+        dicer.add_point(Vec3::new(
+            majorradius + minorradius,
+            majorradius + minorradius,
+            -minorradius,
+        ));
+        dicer.add_point(Vec3::new(
+            majorradius + minorradius,
+            -(majorradius + minorradius),
+            minorradius,
+        ));
+        dicer.add_point(Vec3::new(
+            majorradius + minorradius,
+            -(majorradius + minorradius),
+            -minorradius,
+        ));
+        dicer.add_point(Vec3::new(
+            -(majorradius + minorradius),
+            majorradius + minorradius,
+            minorradius,
+        ));
+        dicer.add_point(Vec3::new(
+            -(majorradius + minorradius),
+            majorradius + minorradius,
+            -minorradius,
+        ));
+        dicer.add_point(Vec3::new(
+            -(majorradius + minorradius),
+            -(majorradius + minorradius),
+            minorradius,
+        ));
+        dicer.add_point(Vec3::new(
+            -(majorradius + minorradius),
+            -(majorradius + minorradius),
+            -minorradius,
+        ));
 
         dicer.get_dice_rate(4)
     };
 
-    render_primitive(dice_amount, |u, v| -> Vec3 {
-        let (theta, phi) = (
-            (u * theta_max).to_radians(),
-            (phimin + v * (phimax - phimin)).to_radians(),
-        );
+    render_primitive(
+        dice_amount,
+        |u, v| -> Vec3 {
+            let (theta, phi) = (
+                (u * theta_max).to_radians(),
+                (phimin + v * (phimax - phimin)).to_radians(),
+            );
 
-        let r = minorradius * phi.cos();
+            let r = minorradius * phi.cos();
 
-        Vec3::new(
-            (majorradius + r) * theta.cos(),
-            (majorradius + r) * theta.sin(),
-            minorradius * phi.sin(),
-        )
-    }, |u, v| -> Vec3 {
-        let (theta, phi) = (
-            (u * theta_max).to_radians(),
-            (phimin + v * (phimax - phimin)).to_radians(),
-        );
+            Vec3::new(
+                (majorradius + r) * theta.cos(),
+                (majorradius + r) * theta.sin(),
+                minorradius * phi.sin(),
+            )
+        },
+        |u, v| -> Vec3 {
+            let (theta, phi) = (
+                (u * theta_max).to_radians(),
+                (phimin + v * (phimax - phimin)).to_radians(),
+            );
 
-        Vec3::new(
-            phi.cos() * theta.sin(),
-            phi.cos() * theta.cos(),
-            phi.sin(),
-        )
-    });
+            Vec3::new(phi.cos() * theta.sin(), phi.cos() * theta.cos(), phi.sin())
+        },
+    );
 }
 
 /// A mesh of polygons: polygon i has nverts[i] corners, whose indices into
@@ -1067,7 +1227,7 @@ pub unsafe extern "C" fn RiTexture(slot: RtInt, s: RtFloat, t: RtFloat, result: 
     let (w, h) = (image.width() as f32, image.height() as f32);
     let (u, v) = (s * (w - 1.), t * (h - 1.));
     let (u, v, u_fr, v_fr) = (u as u32, v as u32, u.fract(), v.fract());
-    
+
     let p1 = image.get_pixel(u, v);
     let p2 = image.get_pixel(u + 1, v);
     let p3 = image.get_pixel(u, v + 1);
@@ -1075,8 +1235,12 @@ pub unsafe extern "C" fn RiTexture(slot: RtInt, s: RtFloat, t: RtFloat, result: 
 
     // Use bilinear interpolation for our colors.
     for i in 0..3 {
-        *result.add(i) = (p1[i] as f32 / 256.0).lerp_monotonic(p2[i] as f32 / 256.0, u_fr).lerp_monotonic(
-                            (p3[i] as f32 / 256.0).lerp_monotonic(p4[i] as f32 / 256.0, u_fr), v_fr);
+        *result.add(i) = (p1[i] as f32 / 256.0)
+            .lerp_monotonic(p2[i] as f32 / 256.0, u_fr)
+            .lerp_monotonic(
+                (p3[i] as f32 / 256.0).lerp_monotonic(p4[i] as f32 / 256.0, u_fr),
+                v_fr,
+            );
     }
 }
 
@@ -1145,22 +1309,32 @@ pub fn write_image(rgba: &[f32]) {
 
     let result = if keep_alpha {
         let image = image::RgbaImage::from_raw(w, h, bytes).expect("w * h * 4 bytes");
-        let format = if ext == "png" { image::ImageFormat::Png } else { image::ImageFormat::Tga };
+        let format = if ext == "png" {
+            image::ImageFormat::Png
+        } else {
+            image::ImageFormat::Tga
+        };
         image.save_with_format(&path, format)
     } else {
         let image = image::RgbImage::from_raw(w, h, bytes).expect("w * h * 3 bytes");
         if ext == "bmp" {
             image.save_with_format(&path, image::ImageFormat::Bmp)
         } else {
-            std::fs::File::create(&path).map_err(image::ImageError::IoError).and_then(|file| {
-                let mut out = std::io::BufWriter::new(file);
-                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 95).encode_image(&image)
-            })
+            std::fs::File::create(&path)
+                .map_err(image::ImageError::IoError)
+                .and_then(|file| {
+                    let mut out = std::io::BufWriter::new(file);
+                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 95)
+                        .encode_image(&image)
+                })
         }
     };
     match result {
         Ok(()) => println!("wrote {} ({} x {})", path, w, h),
-        Err(e) => eprintln!("could not write {} ({}; run reyes from the kit root)", path, e),
+        Err(e) => eprintln!(
+            "could not write {} ({}; run reyes from the kit root)",
+            path, e
+        ),
     }
 }
 
@@ -1175,7 +1349,7 @@ pub fn write_depth(depth: &[f32]) {
         let o = OPTIONS.lock().unwrap();
         (o.xres, o.yres, o.display.clone())
     };
-    let path = format!("assets/renders/{}", name);
+    let path = format!("renders/{}", name);
     if depth.len() != (w as usize) * (h as usize) {
         eprintln!("write_depth: the buffer is not {} x {} floats", w, h);
         return;
@@ -1192,6 +1366,9 @@ pub fn write_depth(depth: &[f32]) {
     });
     match result {
         Ok(()) => println!("wrote {} ({} x {} depth)", path, w, h),
-        Err(e) => eprintln!("could not write {} ({}; run reyes from the kit root)", path, e),
+        Err(e) => eprintln!(
+            "could not write {} ({}; run reyes from the kit root)",
+            path, e
+        ),
     }
 }

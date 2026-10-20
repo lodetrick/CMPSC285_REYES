@@ -16,7 +16,7 @@
 #![allow(non_snake_case)] // the shader names are the handout's
 #![allow(dead_code)] // the stubs do not read their parameter structs yet
 
-use glam::Vec3;
+use glam::{FloatExt, Vec3};
 
 use crate::ri::{RtFloat, RtInt, RtShaderContext, RtShaderFn};
 use std::ffi::c_void;
@@ -68,9 +68,8 @@ pub unsafe extern "C" fn CONSTANT(c: *mut RtShaderContext) {
 /// Ci as the color itself, not multiplied by Oi: the hider applies the
 /// opacity when it composites (Section 7).
 #[no_mangle]
-pub unsafe extern "C" fn STANDARD(c: *mut RtShaderContext) {
+pub unsafe extern "C" fn STANDARD(c: &mut RtShaderContext) {
     // TODO: the lighting. For now, the surface color, unlit.
-    let c_ = &*c;
 
     let (ka, kd, ks) = (0.15, 0.95, 0.85);
 
@@ -98,19 +97,19 @@ pub unsafe extern "C" fn STANDARD(c: *mut RtShaderContext) {
         },
     ];
 
-    let mut light_color = Vec3::ZERO;
-    let mut light_intensity = Vec3::ZERO;
+    let mut light_diffuse = Vec3::ZERO;
+    let mut light_specular = Vec3::ZERO;
     for light in lights {
-        let L = (light.pos - c_.P).normalize();
-        let V = (-c_.P).normalize();
-        let R = 2. * (c_.N.dot(L)) * c_.N - L;
+        let L = (light.pos - c.P).normalize();
+        let V = (-c.P).normalize();
+        let R = 2. * (c.N.dot(L)) * c.N - L;
 
-        light_color += light.col * (L.dot(c_.N).max(0.) * light.int);
-        light_intensity += light.col * (R.dot(V).max(0.0).powi(32) * light.int);
+        light_diffuse += light.col * (L.dot(c.N).max(0.) * light.int);
+        light_specular += light.col * (R.dot(V).max(0.0).powi(32) * light.int);
     }
 
-    (*c).Ci = c_.Cs * (ka + kd * light_color) + ks * light_intensity;
-    (*c).Oi = c_.Os;
+    (*c).Ci = c.Cs * (ka + kd * light_diffuse + ks * light_specular);
+    (*c).Oi = c.Os;
 }
 
 /* --------------------------------------------------------- CHECKERBOARD */
@@ -143,19 +142,34 @@ pub extern "C" fn CHECKERBOARD(c: &mut RtShaderContext) {
     // let ctx = &mut *c;
     let params: &CheckerParams = unsafe { &*(c.params as *const CheckerParams) };
 
-    let (i, j) = ((c.u * params.sizex as f32) as i32, (c.v * params.sizey as f32) as i32);
+    let (i, j) = (
+        (c.u * params.sizex as f32) as i32,
+        (c.v * params.sizey as f32) as i32,
+    );
 
     let light_color = (i + j) % 2 == 0;
-    c.params = if light_color {params.light_params} else {params.dark_params};
+    c.params = if light_color {
+        params.light_params
+    } else {
+        params.dark_params
+    };
 
-    if let Some(shader_fn) = if light_color {params.light} else {params.dark} {
-        unsafe { shader_fn(c); }
+    if let Some(shader_fn) = if light_color {
+        params.light
+    } else {
+        params.dark
+    } {
+        unsafe {
+            shader_fn(c);
+        }
     } else {
         let Cs = c.Cs.clone();
         if !light_color {
             c.Cs = Vec3::ZERO;
         }
-        unsafe { STANDARD(c); }
+        unsafe {
+            STANDARD(c);
+        }
         c.Cs = Cs;
     }
 }
@@ -177,9 +191,18 @@ pub extern "C" fn CHECKERBOARD(c: &mut RtShaderContext) {
 /// BUMPY's high octaves need the precision).
 #[no_mangle]
 pub extern "C" fn perlinNoise(x: f64, y: f64, z: f64) -> f64 {
-    // TODO: the noise. For now, none, so BUMPY moves nothing.
-    let _ = (x, y, z);
-    0.0
+    let (X, Y, Z) = (
+        x.floor() as i32 & 255,
+        y.floor() as i32 & 255,
+        z.floor() as i32 & 255,
+    );
+
+    let (x, y, z) = (x.fract_gl(), y.fract_gl(), z.fract_gl());
+    let (u, v, w) = (fade(x), fade(y), fade(z));
+}
+
+fn fade(t: f64) -> f64 {
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 }
 
 /* ---------------------------------------------------------------- BUMPY */
@@ -192,7 +215,9 @@ pub extern "C" fn perlinNoise(x: f64, y: f64, z: f64) -> f64 {
 /// noise at Po (object space), so the bumps stick to the object as it
 /// moves. The parameters are a BumpParams at c.params.
 #[no_mangle]
-pub unsafe extern "C" fn BUMPY(c: *mut RtShaderContext) {
+pub unsafe extern "C" fn BUMPY(c: &mut RtShaderContext) {
     // TODO: the displacement. For now, P stays where it is.
-    let _ = c;
+    let params: &BumpParams = unsafe { &*(c.params as *const BumpParams) };
+
+    // let h = params.amplitude *
 }
