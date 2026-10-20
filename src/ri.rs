@@ -86,7 +86,15 @@ struct Vertex {
 
 impl Vertex {
     fn new(p: Vec3, ng: Vec3, c: RtColor, o: RtColor, u: f32, v: f32) -> Self {
-        Vertex { p, po: p, ng, c, o, u, v }
+        Vertex {
+            p,
+            po: p,
+            ng,
+            c,
+            o,
+            u,
+            v,
+        }
     }
 }
 
@@ -278,8 +286,8 @@ impl MicroGrid {
                 let mut shader_context = RtShaderContext {
                     P: vertex.p,   /* position of grid vertex in camera/eye space */
                     Po: vertex.po, /* same point in object space */
-                    N: n,         /* unit normal, recomputed after displacement */
-                    u: vertex.u,  /* surface parameters in [0,1], or a mesh's st */
+                    N: n,          /* unit normal, recomputed after displacement */
+                    u: vertex.u,   /* surface parameters in [0,1], or a mesh's st */
                     v: vertex.v,
                     Cs: g.color, /* current RiColor and RiOpacity */
                     Os: g.opacity,
@@ -322,8 +330,8 @@ impl MicroGrid {
                 let mut shader_context = RtShaderContext {
                     P: vertex.p,   /* position of grid vertex in camera/eye space */
                     Po: vertex.po, /* same point in object space */
-                    N: n,         /* unit normal, recomputed after displacement */
-                    u: vertex.u,  /* surface parameters in [0,1], or a mesh's st */
+                    N: n,          /* unit normal, recomputed after displacement */
+                    u: vertex.u,   /* surface parameters in [0,1], or a mesh's st */
                     v: vertex.v,
                     Cs: g.color, /* current RiColor and RiOpacity */
                     Os: g.opacity,
@@ -894,9 +902,9 @@ impl Dicer {
         let p = Vec2::new((p.x + 1.) * 0.5 * self.w, (1. - p.y) * 0.5 * self.h);
 
         self.x_min = self.x_min.min(p.x);
-        self.x_max = self.x_min.max(p.x);
+        self.x_max = self.x_max.max(p.x);
         self.y_min = self.y_min.min(p.y);
-        self.y_max = self.y_min.max(p.y);
+        self.y_max = self.y_max.max(p.y);
     }
 
     fn get_dice_rate(&self, clamp_min: usize) -> (usize, usize) {
