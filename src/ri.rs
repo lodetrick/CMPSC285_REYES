@@ -39,6 +39,7 @@ use std::sync::{Arc, Mutex};
 use glam::{FloatExt, Mat4, Vec2, Vec3, Vec4Swizzles};
 use image::{DynamicImage, GenericImageView, ImageReader};
 use ndarray::Array2;
+use rand::{RngExt, SeedableRng};
 
 /* ------------------------------------------------------------------ types */
 
@@ -99,7 +100,7 @@ impl<'a> Triangle<'a> {
         }
     }
 
-    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Array2<Vec<Sample>>, w: f32, h: f32, xsamples: usize, ysamples: usize) {
+    fn rasterize(&self, object_to_screen : RtMatrix, s: &mut Array2<SampleGroup>, w: f32, h: f32, xsamples: usize, ysamples: usize) {
         // Transform object coordinates to NDC coordinates
         let (p1, p2, p3) = (
             map_to_space(object_to_screen, self.v1.p),
@@ -144,8 +145,8 @@ impl<'a> Triangle<'a> {
 
                         // Generate the position of the pixel (0.5 jitter to start)
                         let r = pixel_base + Vec2::new(
-                            (s_i as f32 + 0.5) / (xsamples as f32),
-                            (s_j as f32 + 0.5) / (ysamples as f32),
+                            (s_i as f32 + sample.jitter.x) / (xsamples as f32),
+                            (s_j as f32 + sample.jitter.y) / (ysamples as f32),
                         );
 
                         let tri_area = (r1-r3).perp_dot(r2-r3);
@@ -169,27 +170,27 @@ impl<'a> Triangle<'a> {
 
                             let will_truncate = hit_info.opacity.abs_diff_eq(Vec3::ONE, 1e-6);
 
-                            let mut insert_index = Some(sample.len());
-                            for i in 0..sample.len() {
-                                if sample[i].depth > hit_info.depth {
+                            let mut insert_index = Some(sample.depths.len());
+                            for i in 0..sample.depths.len() {
+                                if sample.depths[i].depth > hit_info.depth {
                                     insert_index = Some(i);
 
                                     if will_truncate {
-                                        sample.resize(i, Sample::default()); // truncate depth hits to
+                                        sample.depths.resize(i, Sample::default()); // truncate depth hits to
                                     }
 
                                     break;
                                 }
 
                                 // If we hit an opaque poly closer than our poly, then we can't insert.
-                                if sample[i].opacity.abs_diff_eq(Vec3::ONE, 1e-6) {
+                                if sample.depths[i].opacity.abs_diff_eq(Vec3::ONE, 1e-6) {
                                     insert_index = None;
                                     break;
                                 }
                             }
 
                             if let Some(insert_index) = insert_index {
-                                sample.insert(insert_index, hit_info);
+                                sample.depths.insert(insert_index, hit_info);
                             }
                         }
                     }
@@ -465,7 +466,19 @@ impl Sample {
     }
 }
 
-static SAMPLE_BUF: Mutex<Option<Array2<Vec<Sample>>>> = Mutex::new(None);
+#[derive(Clone)]
+struct SampleGroup {
+    jitter: Vec2,
+    depths: Vec<Sample>,
+}
+
+impl SampleGroup {
+    fn new() -> Self {
+        SampleGroup { jitter: Vec2::new(0.5, 0.5), depths: Vec::new() }
+    }
+}
+
+static SAMPLE_BUF: Mutex<Option<Array2<SampleGroup>>> = Mutex::new(None);
 
 #[inline]
 fn get_samples_index(x: usize, y: usize, w: usize) -> usize {
@@ -548,7 +561,16 @@ pub extern "C" fn RiWorldBegin() {
 
     let o = OPTIONS.lock().unwrap();
 
-    *SAMPLE_BUF.lock().unwrap() = Some(Array2::from_elem((w * o.xsamples, h * o.ysamples), Vec::new()));
+    *SAMPLE_BUF.lock().unwrap() = Some(Array2::from_elem((w * o.xsamples, h * o.ysamples), SampleGroup::new()));
+
+    let s = &mut SAMPLE_BUF.lock().unwrap();
+    let s = s.as_mut().unwrap();
+    
+    let mut r = rand::rngs::SmallRng::seed_from_u64(42);
+    
+    for sample_group in s {
+        sample_group.jitter = Vec2::new(r.random_range(0.0..=1.0), r.random_range(0.0..=1.0))
+    }
 }
 
 #[no_mangle]
@@ -569,7 +591,7 @@ pub extern "C" fn RiWorldEnd() {
         for (pos, pixel) in pixels.into_iter().enumerate() {
             let mut depth = f32::INFINITY;
             for sample in pixel {
-                if let Some(closest) = sample.get(0) {
+                if let Some(closest) = sample.depths.get(0) {
                     if depth > closest.depth {
                         depth = closest.depth;
                     }
@@ -596,7 +618,7 @@ pub extern "C" fn RiWorldEnd() {
 
                         let mut sample_color = Vec3::ZERO;
                         let mut sample_opacity = Vec3::ZERO;
-                        for hit in sample {
+                        for hit in &sample.depths {
                             if sample_opacity.abs_diff_eq(Vec3::ONE, 1e-6) {
                                 break;
                             }
