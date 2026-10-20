@@ -205,7 +205,6 @@ impl<'a> Triangle<'a> {
 
                                     if will_truncate {
                                         sample.depths.resize(i, Sample::default());
-                                        // truncate depth hits to
                                     }
 
                                     break;
@@ -307,6 +306,25 @@ impl MicroGrid {
                 // };
 
                 vertex.p = shader_context.P;
+            }
+        }
+
+        for u in 0..=self.w {
+            for v in 0..=self.h {
+                let dPdu = if u == self.w {
+                    self.get_vertex(u, v).p - self.get_vertex(u - 1, v).p
+                } else {
+                    self.get_vertex(u + 1, v).p - self.get_vertex(u, v).p
+                };
+                
+                let dPdv = if v == self.h {
+                    self.get_vertex(u, v).p - self.get_vertex(u, v - 1).p
+                } else {
+                    self.get_vertex(u, v + 1).p - self.get_vertex(u, v).p
+                };
+
+                let vertex = self.get_vertex_mut(u, v);
+                vertex.ng = dPdu.cross(dPdv).normalize();
             }
         }
     }
@@ -663,7 +681,10 @@ pub unsafe extern "C" fn RiDisplay(name: *const c_char, type_: RtToken, mode: Rt
 /// RiFrameBegin/End bracket one frame of an animation: save the graphics
 /// state at Begin and restore it at End, so that each frame starts afresh.
 #[no_mangle]
-pub extern "C" fn RiFrameBegin(_frame: RtInt) {}
+pub extern "C" fn RiFrameBegin(_frame: RtInt) {
+    let mut g = G_STATE.lock().unwrap();
+    *g = GraphicsState::default();
+}
 
 #[no_mangle]
 pub extern "C" fn RiFrameEnd() {}
