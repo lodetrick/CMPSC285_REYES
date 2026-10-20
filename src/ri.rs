@@ -1,6 +1,8 @@
 //! TODO:
 //!
-//! 3. Displacement
+//! 1. Weird lighting on Tunnel
+//! 2. SimpleAnimation not rendering
+//! 3. Not culling any tris / tris can cover the whole screen for some reason, need to fix that
 //! 5. Check Transparency
 //! 6. Lights coming from weird positions - partially solved
 //! 7. Extra Credit Ideas?
@@ -262,7 +264,7 @@ impl MicroGrid {
         &mut self.vertices[x + y * (self.w + 1)]
     }
 
-    fn displace(&mut self, g: &GraphicsState, o: &Options) {
+    fn displace(&mut self, g: &GraphicsState) {
         let Some(displace_fn) = g.displace_fn else {
             return;
         };
@@ -298,17 +300,15 @@ impl MicroGrid {
                 unsafe {
                     displace_fn(&mut shader_context);
                 }
-                // shader_context.N = {
-                //     let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
-                //     let p2_w = map_to_space(object_to_world, self.get_vertex(if u == self.w {u - 1} else {u + 1}, v).p);
-                //     let p3_w = map_to_space(object_to_world, self.get_vertex(u, if v == self.h {v - 1} else {v + 1}).p);
-                //     (p1_w - p2_w).cross(p1_w - p3_w).normalize()
-                // };
 
                 vertex.p = shader_context.P;
             }
         }
 
+        self.renormalize();
+    }
+
+    fn renormalize(&mut self) {
         for u in 0..=self.w {
             for v in 0..=self.h {
                 let dPdu = if u == self.w {
@@ -324,12 +324,24 @@ impl MicroGrid {
                 };
 
                 let vertex = self.get_vertex_mut(u, v);
-                vertex.ng = dPdu.cross(dPdv).normalize();
+                let cross = dPdu.cross(dPdv);
+                vertex.ng = cross.normalize();
+                // if cross.length_squared() > 1e-5 { // causes issues?
+                // }
             }
         }
     }
 
-    fn shade(&mut self, g: &GraphicsState, o: &Options) {
+    fn flip_normals(&mut self) {
+        self.vertices.par_iter_mut().for_each(|vertex| {
+            if vertex.ng.dot(vertex.p) > 0.0 {
+                vertex.ng = -vertex.ng;
+            }
+        });
+    }
+
+    fn shade(&mut self, g: &GraphicsState) {
+        // self.flip_normals();
         let object_to_view = g.object_to_view();
 
         for u in 0..=self.w {
@@ -357,13 +369,6 @@ impl MicroGrid {
                     Ci: Vec3::ZERO, /* written by surface shaders */
                     Oi: Vec3::ZERO,
                 };
-
-                // shader_context.N = {
-                //     let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
-                //     let p2_w = map_to_space(object_to_world, self.get_vertex(if u == self.w {u - 1} else {u + 1}, v).p);
-                //     let p3_w = map_to_space(object_to_world, self.get_vertex(u, if v == self.h {v - 1} else {v + 1}).p);
-                //     (p1_w - p2_w).cross(p1_w - p3_w).normalize()
-                // };
 
                 if let Some(shader_fn) = g.shader_fn {
                     unsafe {
@@ -408,8 +413,6 @@ impl MicroGrid {
                 let z_tr = map_to_space(object_to_view, v_tr.p).z;
                 let z_bl = map_to_space(object_to_view, v_bl.p).z;
                 let z_br = map_to_space(object_to_view, v_br.p).z;
-
-                // println!("{z_tl} {z_tr} {z_bl} {z_br}");
 
                 if z_tl.min(z_tr.min(z_bl)) > 0.01 {
                     tri1.rasterize(view_to_screen, s, w, h, xs, ys);
@@ -955,6 +958,9 @@ where
             let vert = grid.get_vertex_mut(_u, _v);
             let po = pos_fn(u, v);
 
+            // let n = object_to_view.transpose().try_inverse().unwrap() * norm_fn(u, v).extend(0.0);
+            // let ng = (n.xyz() / n.w).normalize();
+
             vert.p = map_to_space(object_to_view, po);
             vert.po = po;
             vert.ng = norm_fn(u, v);
@@ -965,8 +971,8 @@ where
         }
     }
 
-    grid.displace(&g, &o);
-    grid.shade(&g, &o);
+    grid.displace(&g);
+    grid.shade(&g);
     grid.sample(&g, &o);
 }
 
