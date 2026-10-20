@@ -393,11 +393,11 @@ impl MicroGrid {
                 let z_bl = v_bl.p.z;
                 let z_br = v_br.p.z;
 
-                if z_tl.min(z_tr.min(z_bl)) > 0.01 {
+                if z_tl.min(z_tr.min(z_bl)) > 0.1 {
                     tri1.rasterize(&view_to_screen, s, w, h, xs, ys);
                 }
 
-                if z_bl.min(z_tl.min(z_br)) > 0.01 {
+                if z_bl.min(z_tl.min(z_br)) > 0.1 {
                     tri2.rasterize(&view_to_screen, s, w, h, xs, ys);
                 }
             }
@@ -722,7 +722,6 @@ pub extern "C" fn RiWorldEnd() {
     let s = &SAMPLE_BUF.lock().unwrap();
     let samples = s.as_ref().unwrap();
     if depth {
-        println!("Saving Depth");
         let mut depth_buf: Vec<RtFloat> = vec![0.; w * h];
 
         let pixels =
@@ -938,7 +937,7 @@ where
             let po = pos_fn(u, v);
 
             let n = object_to_view.try_inverse().unwrap().transpose() * norm_fn(u, v).extend(0.0);
-            let ng = n.xyz().normalize();
+            let ng = n.w.signum() * n.xyz().normalize();
 
             vert.p = map_to_space(&object_to_view, po);
             vert.po = po;
