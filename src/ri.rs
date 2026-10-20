@@ -76,6 +76,7 @@ enum Projection {
 #[derive(Clone)]
 struct Vertex {
     p: Vec3,
+    po: Vec3,
     ng: Vec3,
     c: RtColor,
     o: RtColor,
@@ -85,7 +86,7 @@ struct Vertex {
 
 impl Vertex {
     fn new(p: Vec3, ng: Vec3, c: RtColor, o: RtColor, u: f32, v: f32) -> Self {
-        Vertex { p, ng, c, o, u, v }
+        Vertex { p, po: p, ng, c, o, u, v }
     }
 }
 
@@ -102,7 +103,7 @@ impl<'a> Triangle<'a> {
 
     fn rasterize(
         &self,
-        object_to_screen: RtMatrix,
+        world_to_screen: RtMatrix,
         s: &mut Array2<SampleGroup>,
         w: f32,
         h: f32,
@@ -111,9 +112,9 @@ impl<'a> Triangle<'a> {
     ) {
         // Transform object coordinates to NDC coordinates
         let (p1, p2, p3) = (
-            map_to_space(object_to_screen, self.v1.p),
-            map_to_space(object_to_screen, self.v2.p),
-            map_to_space(object_to_screen, self.v3.p),
+            map_to_space(world_to_screen, self.v1.p),
+            map_to_space(world_to_screen, self.v2.p),
+            map_to_space(world_to_screen, self.v3.p),
         );
 
         let (r1, r2, r3) = (
@@ -254,14 +255,16 @@ impl MicroGrid {
         &mut self.vertices[x + y * (self.w + 1)]
     }
 
-    fn shade(&mut self, g: &GraphicsState, o: &Options) {
-        let object_to_world = g.world_to_view() * g.transformation_curr;
+    fn displace(&mut self, g: &GraphicsState, o: &Options) {
+        let Some(displace_fn) = g.displace_fn else {
+            return;
+        };
+
+        let object_to_view = g.object_to_view();
 
         for u in 0..=self.w {
             for v in 0..=self.h {
                 let vertex = self.get_vertex_mut(u, v);
-
-                let p_world = map_to_space(object_to_world, vertex.p);
 
                 let params: *const c_void = if let Some(displace_params) = &g.displace_params {
                     displace_params.as_ptr() as *const c_void
@@ -269,12 +272,12 @@ impl MicroGrid {
                     ptr::null()
                 };
 
-                let n = object_to_world.transpose().try_inverse().unwrap() * vertex.ng.extend(0.0);
+                let n = object_to_view.transpose().try_inverse().unwrap() * vertex.ng.extend(0.0);
                 let n = (n.xyz() / n.w).normalize();
 
                 let mut shader_context = RtShaderContext {
-                    P: p_world,   /* position of grid vertex in camera/eye space */
-                    Po: vertex.p, /* same point in object space */
+                    P: vertex.p,   /* position of grid vertex in camera/eye space */
+                    Po: vertex.po, /* same point in object space */
                     N: n,         /* unit normal, recomputed after displacement */
                     u: vertex.u,  /* surface parameters in [0,1], or a mesh's st */
                     v: vertex.v,
@@ -285,16 +288,9 @@ impl MicroGrid {
                     Oi: Vec3::ZERO,
                 };
 
-                if let Some(displace_fn) = g.displace_fn {
-                    unsafe {
-                        displace_fn(&mut shader_context);
-                    }
+                unsafe {
+                    displace_fn(&mut shader_context);
                 }
-                //     }
-                // }
-
-                // for u in 0..=self.w {
-                //     for v in 0..=self.h {
                 // shader_context.N = {
                 //     let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
                 //     let p2_w = map_to_space(object_to_world, self.get_vertex(if u == self.w {u - 1} else {u + 1}, v).p);
@@ -302,11 +298,46 @@ impl MicroGrid {
                 //     (p1_w - p2_w).cross(p1_w - p3_w).normalize()
                 // };
 
-                shader_context.params = if let Some(shader_params) = &g.shader_params {
+                vertex.p = shader_context.P;
+            }
+        }
+    }
+
+    fn shade(&mut self, g: &GraphicsState, o: &Options) {
+        let object_to_view = g.object_to_view();
+
+        for u in 0..=self.w {
+            for v in 0..=self.h {
+                let vertex = self.get_vertex_mut(u, v);
+
+                let params = if let Some(shader_params) = &g.shader_params {
                     shader_params.as_ptr() as *const c_void
                 } else {
                     ptr::null()
                 };
+
+                let n = object_to_view.transpose().try_inverse().unwrap() * vertex.ng.extend(0.0);
+                let n = (n.xyz() / n.w).normalize();
+
+                let mut shader_context = RtShaderContext {
+                    P: vertex.p,   /* position of grid vertex in camera/eye space */
+                    Po: vertex.po, /* same point in object space */
+                    N: n,         /* unit normal, recomputed after displacement */
+                    u: vertex.u,  /* surface parameters in [0,1], or a mesh's st */
+                    v: vertex.v,
+                    Cs: g.color, /* current RiColor and RiOpacity */
+                    Os: g.opacity,
+                    params: params,
+                    Ci: Vec3::ZERO, /* written by surface shaders */
+                    Oi: Vec3::ZERO,
+                };
+
+                // shader_context.N = {
+                //     let p1_w = map_to_space(object_to_world, self.get_vertex(u, v).p);
+                //     let p2_w = map_to_space(object_to_world, self.get_vertex(if u == self.w {u - 1} else {u + 1}, v).p);
+                //     let p3_w = map_to_space(object_to_world, self.get_vertex(u, if v == self.h {v - 1} else {v + 1}).p);
+                //     (p1_w - p2_w).cross(p1_w - p3_w).normalize()
+                // };
 
                 if let Some(shader_fn) = g.shader_fn {
                     unsafe {
@@ -331,8 +362,8 @@ impl MicroGrid {
             ndarray::prelude::Dim<[usize; 2]>,
             SampleGroup,
         > = s.as_mut().unwrap();
-        let object_to_world = g.object_to_world();
-        let object_to_screen = g.object_to_screen(&o);
+        let object_to_view: Mat4 = g.object_to_view();
+        let view_to_screen = g.view_to_screen(&o);
         let (w, h, xs, ys) = (o.xres as f32, o.yres as f32, o.xsamples, o.ysamples);
 
         for u in 0..self.w {
@@ -347,19 +378,19 @@ impl MicroGrid {
                     Triangle::new(v_bl, v_tr, v_br),
                 );
 
-                let z_tl = map_to_space(object_to_world, v_tl.p).z;
-                let z_tr = map_to_space(object_to_world, v_tr.p).z;
-                let z_bl = map_to_space(object_to_world, v_bl.p).z;
-                let z_br = map_to_space(object_to_world, v_br.p).z;
+                let z_tl = map_to_space(object_to_view, v_tl.p).z;
+                let z_tr = map_to_space(object_to_view, v_tr.p).z;
+                let z_bl = map_to_space(object_to_view, v_bl.p).z;
+                let z_br = map_to_space(object_to_view, v_br.p).z;
 
                 // println!("{z_tl} {z_tr} {z_bl} {z_br}");
 
                 if z_tl.min(z_tr.min(z_bl)) > 0.01 {
-                    tri1.rasterize(object_to_screen, s, w, h, xs, ys);
+                    tri1.rasterize(view_to_screen, s, w, h, xs, ys);
                 }
 
                 if z_bl.min(z_tl.min(z_br)) > 0.01 {
-                    tri2.rasterize(object_to_screen, s, w, h, xs, ys);
+                    tri2.rasterize(view_to_screen, s, w, h, xs, ys);
                 }
             }
         }
@@ -463,7 +494,7 @@ impl GraphicsState {
         self.view_to_screen(&o) * self.world_to_view() * self.transformation_curr
     }
 
-    fn object_to_world(&self) -> RtMatrix {
+    fn object_to_view(&self) -> RtMatrix {
         self.world_to_view() * self.transformation_curr
     }
 
@@ -884,6 +915,7 @@ where
     // Grab the locks that we need.
     let g = G_STATE.lock().unwrap();
     let o = OPTIONS.lock().unwrap();
+    let object_to_view = g.object_to_view();
 
     let mut grid: MicroGrid = MicroGrid::new(umax, vmax);
 
@@ -892,7 +924,10 @@ where
             let (u, v) = (_u as f32 / umax as f32, _v as f32 / vmax as f32);
 
             let vert = grid.get_vertex_mut(_u, _v);
-            vert.p = pos_fn(u, v);
+            let po = pos_fn(u, v);
+
+            vert.p = map_to_space(object_to_view, po);
+            vert.po = po;
             vert.ng = norm_fn(u, v);
             vert.c = g.color;
             vert.o = g.opacity;
@@ -901,6 +936,7 @@ where
         }
     }
 
+    grid.displace(&g, &o);
     grid.shade(&g, &o);
     grid.sample(&g, &o);
 }
