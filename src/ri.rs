@@ -3,6 +3,7 @@
 //! 1. Weird lighting on Tunnel
 //! 2. SimpleAnimation not rendering
 //! 3. Not culling any tris / tris can cover the whole screen for some reason, need to fix that
+//! 4. Normals seem to be off now...
 //! 5. Check Transparency
 //! 6. Lights coming from weird positions - partially solved
 //! 7. Extra Credit Ideas?
@@ -113,7 +114,7 @@ impl<'a> Triangle<'a> {
 
     fn rasterize(
         &self,
-        world_to_screen: RtMatrix,
+        view_to_screen: &RtMatrix,
         s: &mut Array2<SampleGroup>,
         w: f32,
         h: f32,
@@ -122,9 +123,9 @@ impl<'a> Triangle<'a> {
     ) {
         // Transform object coordinates to NDC coordinates
         let (p1, p2, p3) = (
-            map_to_space(world_to_screen, self.v1.p),
-            map_to_space(world_to_screen, self.v2.p),
-            map_to_space(world_to_screen, self.v3.p),
+            map_to_space(view_to_screen, self.v1.p),
+            map_to_space(view_to_screen, self.v2.p),
+            map_to_space(view_to_screen, self.v3.p),
         );
 
         let (r1, r2, r3) = (
@@ -316,9 +317,9 @@ impl MicroGrid {
 
                 let vertex = self.get_vertex_mut(u, v);
                 let cross = dPdu.cross(dPdv);
-                if cross.length() > f32::EPSILON {
+                // if cross.length() > f32::EPSILON {
                     vertex.ng = cross.normalize();
-                }
+                // }
             }
         }
     }
@@ -371,12 +372,7 @@ impl MicroGrid {
 
     fn sample(&mut self, g: &GraphicsState, o: &Options) {
         let s = &mut SAMPLE_BUF.lock().unwrap();
-        let s: &mut ndarray::prelude::ArrayBase<
-            ndarray::OwnedRepr<SampleGroup>,
-            ndarray::prelude::Dim<[usize; 2]>,
-            SampleGroup,
-        > = s.as_mut().unwrap();
-        let object_to_view: Mat4 = g.object_to_view();
+        let s = s.as_mut().unwrap();
         let view_to_screen = g.view_to_screen(&o);
         let (w, h, xs, ys) = (o.xres as f32, o.yres as f32, o.xsamples, o.ysamples);
 
@@ -392,17 +388,17 @@ impl MicroGrid {
                     Triangle::new(v_bl, v_tr, v_br),
                 );
 
-                let z_tl = map_to_space(object_to_view, v_tl.p).z;
-                let z_tr = map_to_space(object_to_view, v_tr.p).z;
-                let z_bl = map_to_space(object_to_view, v_bl.p).z;
-                let z_br = map_to_space(object_to_view, v_br.p).z;
+                let z_tl = v_tl.p.z;
+                let z_tr = v_tr.p.z;
+                let z_bl = v_bl.p.z;
+                let z_br = v_br.p.z;
 
                 if z_tl.min(z_tr.min(z_bl)) > 0.01 {
-                    tri1.rasterize(view_to_screen, s, w, h, xs, ys);
+                    tri1.rasterize(&view_to_screen, s, w, h, xs, ys);
                 }
 
                 if z_bl.min(z_tl.min(z_br)) > 0.01 {
-                    tri2.rasterize(view_to_screen, s, w, h, xs, ys);
+                    tri2.rasterize(&view_to_screen, s, w, h, xs, ys);
                 }
             }
         }
@@ -439,7 +435,7 @@ unsafe fn RtMatrix_from_ptr(transform: *const [[RtFloat; 4]; 4]) -> RtMatrix {
     RtMatrix::from_cols_array_2d(transform.as_ref_unchecked())
 }
 
-fn map_to_space(transform: RtMatrix, p: Vec3) -> Vec3 {
+fn map_to_space(transform: &RtMatrix, p: Vec3) -> Vec3 {
     let p_transformed = transform.mul_vec4(p.extend(1.));
     p_transformed.xyz() / p_transformed.w
 }
@@ -905,7 +901,7 @@ impl Dicer {
     }
 
     fn add_point(&mut self, p: Vec3) {
-        let p = map_to_space(self.obj_to_screen, p);
+        let p = map_to_space(&self.obj_to_screen, p);
         let p = Vec2::new((p.x + 1.) * 0.5 * self.w, (1. - p.y) * 0.5 * self.h);
 
         self.x_min = self.x_min.min(p.x);
@@ -944,7 +940,7 @@ where
             let n = object_to_view.transpose().try_inverse().unwrap() * norm_fn(u, v).extend(0.0);
             let ng = (n.xyz() / n.w).normalize();
 
-            vert.p = map_to_space(object_to_view, po);
+            vert.p = map_to_space(&object_to_view, po);
             vert.po = po;
             vert.ng = ng;
             vert.c = g.color;
@@ -1176,7 +1172,7 @@ pub extern "C" fn RiTorus(
                 (phimin + v * (phimax - phimin)).to_radians(),
             );
 
-            Vec3::new(phi.cos() * theta.sin(), phi.cos() * theta.cos(), phi.sin())
+            Vec3::new(phi.cos() * theta.cos(), phi.cos() * theta.sin(), phi.sin())
         },
     );
 }
@@ -1258,7 +1254,7 @@ pub unsafe extern "C" fn RiMakeTexture(file: *const c_char, slot: RtInt) {
         ImageReader::open(file)?.decode()
     }
 
-    let Ok(image) = load_image(&format!("assets/textures/{}", token(file))) else {
+    let Ok(image) = load_image(&format!("assets/{}", token(file))) else {
         panic!("Unknown Image file: {}", token(file));
     };
 
