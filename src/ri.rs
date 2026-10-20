@@ -36,8 +36,8 @@ use std::path::Path;
 use std::ptr;
 use std::sync::{Arc, Mutex};
 
-use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
-use image::{DynamicImage, ImageReader};
+use glam::{FloatExt, Mat4, Vec2, Vec3, Vec4Swizzles};
+use image::{DynamicImage, GenericImageView, ImageReader};
 use ndarray::Array2;
 
 /* ------------------------------------------------------------------ types */
@@ -472,7 +472,7 @@ fn get_samples_index(x: usize, y: usize, w: usize) -> usize {
     x + y * w
 }
 
-static TEXTURE_BUF: Mutex<Option<[DynamicImage; 8]>> = Mutex::new(None);
+static TEXTURE_BUF: Mutex<[Option<DynamicImage>; 8]> = Mutex::new([const { None }; 8]);
 
 /* ---------------------------------------------------------- graphics state */
 
@@ -487,8 +487,8 @@ pub extern "C" fn RiBegin(_name: RtToken) {
     let mut o = OPTIONS.lock().unwrap();
     *o = Options::default();
 
-    let mut o = G_STATE.lock().unwrap();
-    *o = GraphicsState::default();
+    let mut g = G_STATE.lock().unwrap();
+    *g = GraphicsState::default();
 }
 
 #[no_mangle]
@@ -1019,21 +1019,39 @@ pub unsafe extern "C" fn RiMakeTexture(file: *const c_char, slot: RtInt) {
         ImageReader::open(file)?.decode()
     }
 
-    let Ok(image) = load_image(token(file)) else {
+    let Ok(image) = load_image(&format!("assets/textures/{}", token(file))) else {
         panic!("Unknown Image file: {}", token(file));
     };
 
     let tex = &mut TEXTURE_BUF.lock().unwrap();
-    let tex = tex.as_mut().unwrap();
 
-    tex[slot as usize] = image;
+    tex[slot as usize] = Some(image);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn RiTexture(slot: RtInt, s: RtFloat, t: RtFloat, result: *mut RtFloat) {
-    let _ = (slot, s, t);
+    let tex = &mut TEXTURE_BUF.lock().unwrap();
+
+    let Some(image) = &tex[slot as usize] else {
+        return;
+    };
+
+    let s = s - s.floor();
+    let t = t - t.floor();
+
+    let (w, h) = (image.width() as f32, image.height() as f32);
+    let (u, v) = (s * (w - 1.), t * (h - 1.));
+    let (u, v, u_fr, v_fr) = (u as u32, v as u32, u.fract(), v.fract());
+    
+    let p1 = image.get_pixel(u, v);
+    let p2 = image.get_pixel(u + 1, v);
+    let p3 = image.get_pixel(u, v + 1);
+    let p4 = image.get_pixel(u + 1, v + 1);
+
+    // Use bilinear interpolation for our colors.
     for i in 0..3 {
-        *result.add(i) = 0.0;
+        *result.add(i) = (p1[i] as f32 / 256.0).lerp_monotonic(p2[i] as f32 / 256.0, u_fr).lerp_monotonic(
+                            (p3[i] as f32 / 256.0).lerp_monotonic(p4[i] as f32 / 256.0, u_fr), v_fr);
     }
 }
 
