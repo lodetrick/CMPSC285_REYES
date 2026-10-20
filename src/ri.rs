@@ -937,8 +937,8 @@ where
             let vert = grid.get_vertex_mut(_u, _v);
             let po = pos_fn(u, v);
 
-            let n = object_to_view.transpose().try_inverse().unwrap() * norm_fn(u, v).extend(0.0);
-            let ng = (n.xyz() / n.w).normalize();
+            let n = object_to_view.try_inverse().unwrap().transpose() * norm_fn(u, v).extend(0.0);
+            let ng = n.xyz().normalize();
 
             vert.p = map_to_space(&object_to_view, po);
             vert.po = po;
