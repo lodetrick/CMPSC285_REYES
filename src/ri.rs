@@ -432,7 +432,7 @@ pub type RtShaderFn = Option<unsafe extern "C" fn(*mut RtShaderContext)>;
 /* --------------------------------------------------------- type helpers */
 
 unsafe fn RtMatrix_from_ptr(transform: *const [[RtFloat; 4]; 4]) -> RtMatrix {
-    RtMatrix::from_cols_array_2d(transform.as_ref_unchecked())
+    RtMatrix::from_cols_array_2d(transform.as_ref_unchecked()).transpose()
 }
 
 fn map_to_space(transform: &RtMatrix, p: Vec3) -> Vec3 {
@@ -507,7 +507,7 @@ impl GraphicsState {
     }
 
     fn world_to_view(&self) -> RtMatrix {
-        self.camera_transform.inverse()
+        self.camera_transform
     }
 
     fn view_to_screen(&self, o: &Options) -> RtMatrix {
