@@ -254,10 +254,13 @@ impl MicroGrid {
                     ptr::null()
                 };
 
+                let n = object_to_world.transpose().try_inverse().unwrap() * vertex.ng.extend(0.0);
+                let n = (n.xyz() / n.w).normalize();
+
                 let mut shader_context = RtShaderContext {
                     P: p_world,  /* position of grid vertex in camera/eye space */
                     Po: vertex.p, /* same point in object space */
-                    N: vertex.ng, /* unit normal, recomputed after displacement */
+                    N: n, /* unit normal, recomputed after displacement */
                     u: vertex.u, /* surface parameters in [0,1], or a mesh's st */
                     v: vertex.v,
                     Cs: g.color, /* current RiColor and RiOpacity */
@@ -946,8 +949,8 @@ pub extern "C" fn RiTorus(majorradius: RtFloat, minorradius: RtFloat, phimin: Rt
         let r = minorradius * phi.cos();
 
         Vec3::new(
-            (majorradius + r) * theta.sin(),
             (majorradius + r) * theta.cos(),
+            (majorradius + r) * theta.sin(),
             minorradius * phi.sin(),
         )
     }, |u, v| -> Vec3 {
