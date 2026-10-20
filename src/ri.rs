@@ -269,8 +269,6 @@ impl MicroGrid {
             return;
         };
 
-        let object_to_view = g.object_to_view();
-
         self.vertices.par_iter_mut().for_each(|vertex| {
             let params: *const c_void = if let Some(displace_params) = &g.displace_params {
                 displace_params.as_ptr() as *const c_void
@@ -278,13 +276,10 @@ impl MicroGrid {
                 ptr::null()
             };
     
-            let n = object_to_view.transpose().try_inverse().unwrap() * vertex.ng.extend(0.0);
-            let n = (n.xyz() / n.w).normalize();
-    
             let mut shader_context = RtShaderContext {
                 P: vertex.p,   /* position of grid vertex in camera/eye space */
                 Po: vertex.po, /* same point in object space */
-                N: n,          /* unit normal, recomputed after displacement */
+                N: vertex.ng,          /* unit normal, recomputed after displacement */
                 u: vertex.u,   /* surface parameters in [0,1], or a mesh's st */
                 v: vertex.v,
                 Cs: g.color, /* current RiColor and RiOpacity */
@@ -321,9 +316,9 @@ impl MicroGrid {
 
                 let vertex = self.get_vertex_mut(u, v);
                 let cross = dPdu.cross(dPdv);
-                vertex.ng = cross.normalize();
-                // if cross.length_squared() > 1e-5 { // causes issues?
-                // }
+                if cross.length() > f32::EPSILON {
+                    vertex.ng = cross.normalize();
+                }
             }
         }
     }
@@ -337,8 +332,7 @@ impl MicroGrid {
     }
 
     fn shade(&mut self, g: &GraphicsState) {
-        // self.flip_normals();
-        let object_to_view = g.object_to_view();
+        self.flip_normals();
 
         self.vertices.par_iter_mut().for_each(|vertex| {
             let params = if let Some(shader_params) = &g.shader_params {
@@ -347,13 +341,10 @@ impl MicroGrid {
                 ptr::null()
             };
     
-            let n = object_to_view.transpose().try_inverse().unwrap() * vertex.ng.extend(0.0);
-            let n = (n.xyz() / n.w).normalize();
-    
             let mut shader_context = RtShaderContext {
                 P: vertex.p,   /* position of grid vertex in camera/eye space */
                 Po: vertex.po, /* same point in object space */
-                N: n,          /* unit normal, recomputed after displacement */
+                N: vertex.ng,          /* unit normal, recomputed after displacement */
                 u: vertex.u,   /* surface parameters in [0,1], or a mesh's st */
                 v: vertex.v,
                 Cs: g.color, /* current RiColor and RiOpacity */
@@ -950,12 +941,12 @@ where
             let vert = grid.get_vertex_mut(_u, _v);
             let po = pos_fn(u, v);
 
-            // let n = object_to_view.transpose().try_inverse().unwrap() * norm_fn(u, v).extend(0.0);
-            // let ng = (n.xyz() / n.w).normalize();
+            let n = object_to_view.transpose().try_inverse().unwrap() * norm_fn(u, v).extend(0.0);
+            let ng = (n.xyz() / n.w).normalize();
 
             vert.p = map_to_space(object_to_view, po);
             vert.po = po;
-            vert.ng = norm_fn(u, v);
+            vert.ng = ng;
             vert.c = g.color;
             vert.o = g.opacity;
             vert.u = u;
