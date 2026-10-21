@@ -240,9 +240,9 @@ pub extern "C" fn perlinNoise(x: f64, y: f64, z: f64) -> f64 {
     ];
 
     let (X, Y, Z) = (
-        x.floor() as usize & 255,
-        y.floor() as usize & 255,
-        z.floor() as usize & 255,
+        (x.floor() as i64 & 255) as usize,
+        (y.floor() as i64 & 255) as usize,
+        (z.floor() as i64 & 255) as usize,
     );
 
     let (x, y, z) = (x - x.floor(), y - y.floor(), z - z.floor());
