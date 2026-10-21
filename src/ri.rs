@@ -190,7 +190,7 @@ impl<'a> Triangle<'a> {
 
                         if 0. <= w1 && w1 < 1. && 0. <= w2 && w2 < 1. && 0. <= w3 && w3 < 1. {
                             let hit_info = Sample {
-                                depth: barycentric(w2, w3, p1.z, p2.z, p3.z),
+                                depth: barycentric(w2, w3, self.v1.p.z, self.v2.p.z, self.v3.p.z),
                                 color: barycentric_vec(w2, w3, self.v1.c, self.v2.c, self.v3.c),
                                 opacity: barycentric_vec(w2, w3, self.v1.o, self.v2.o, self.v3.o),
                             };
@@ -541,26 +541,34 @@ pub extern "C" fn RiWorldEnd() {
         )
     };
 
-    let sample_count = xsamples * ysamples;
-
     let s = &SAMPLE_BUF.lock().unwrap();
     let samples = s.as_ref().unwrap();
     if depth {
-        let mut depth_buf: Vec<RtFloat> = vec![0.; w * h];
+        let mut depth_buf: Vec<RtFloat> = vec![f32::INFINITY; w * h];
 
-        let pixels =
-            samples.windows_with_stride((sample_count, sample_count), (xsamples, ysamples));
-        for (pos, pixel) in pixels.into_iter().enumerate() {
-            let mut depth = f32::INFINITY;
-            for sample in pixel {
-                if let Some(closest) = sample.depths.lock().unwrap().get(0) {
-                    if depth > closest.depth {
-                        depth = closest.depth;
+        for x in 0..w {
+            for y in 0..h {
+                let pos = (x * xsamples, y * ysamples);
+
+                let mut depth = f32::INFINITY;
+                for i in 0..xsamples {
+                    for j in 0..ysamples {
+                        let sample = samples.get((pos.0 + i, pos.1 + j));
+                        let Some(sample) = sample else {
+                            unreachable!();
+                        };
+
+                        for hit in sample.depths.lock().unwrap().iter() {
+                            if hit.opacity.max_element() > 0.5 {
+                                depth = depth.min(hit.depth);
+                            }
+                        }
                     }
                 }
-            }
 
-            depth_buf[pos] = depth;
+                let pos = x + y * w;
+                depth_buf[pos] = depth;
+            }
         }
 
         write_depth(&depth_buf);
@@ -775,14 +783,15 @@ pub unsafe extern "C" fn RiTexture(slot: RtInt, s: RtFloat, t: RtFloat, result: 
     let s = s - s.floor();
     let t = t - t.floor();
 
-    let (w, h) = (image.width() as f32, image.height() as f32);
-    let (u, v) = (s * (w - 1.), t * (h - 1.));
+    let (w, h) = (image.width(), image.height());
+    let (u, v) = (s * (w as f32 - 1.), t * (h as f32 - 1.));
     let (u, v, u_fr, v_fr) = (u as u32, v as u32, u.fract(), v.fract());
+    let (up, vp) = ((u + 1).min(w - 1), (v + 1).min(h - 1));
 
     let p1 = image.get_pixel(u, v);
-    let p2 = image.get_pixel(u + 1, v);
-    let p3 = image.get_pixel(u, v + 1);
-    let p4 = image.get_pixel(u + 1, v + 1);
+    let p2 = image.get_pixel(up, v);
+    let p3 = image.get_pixel(u, vp);
+    let p4 = image.get_pixel(up, vp);
 
     // Use bilinear interpolation for our colors.
     for i in 0..3 {
