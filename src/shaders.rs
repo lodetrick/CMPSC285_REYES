@@ -68,7 +68,7 @@ pub unsafe extern "C" fn CONSTANT(c: *mut RtShaderContext) {
 /// opacity when it composites (Section 7).
 #[no_mangle]
 pub unsafe extern "C" fn STANDARD(c: &mut RtShaderContext) {
-    let (ka, kd, ks) = (0.15, 0.95, 0.85);
+    let (ka, kd, ks) = (0.15, 0.8, 0.3);
 
     struct Light {
         pos: Vec3,
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn STANDARD(c: &mut RtShaderContext) {
 
     let lights = [
         Light {
-            pos: Vec3::new(-6., 8., 4.),
+            pos: Vec3::new(-6., 8., -4.),
             col: Vec3::new(1.0, 0.95, 0.85),
             int: 1.0,
         },
