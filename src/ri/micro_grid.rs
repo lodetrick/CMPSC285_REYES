@@ -132,44 +132,74 @@ impl MicroGrid {
             }
 
             // vertex.c = glam::Vec3Swizzles::zzz(vertex.p) / 30.0;
-            vertex.c = shader_context.Ci;
-            vertex.o = shader_context.Oi;
-            // vertex.c = (shader_context.N + Vec3::ONE) * 0.5;
-            // vertex.o = Vec3::ONE;
+            // vertex.c = shader_context.Ci;
+            // vertex.o = shader_context.Oi;
+            vertex.c = (shader_context.N + Vec3::ONE) * 0.5;
+            vertex.o = Vec3::ONE;
+        });
+    }
+
+    pub fn splat(&self, g: &GraphicsState, o: &Options) {
+        let s = &SAMPLE_BUF.lock().unwrap();
+        let s = s.as_ref().unwrap();
+        let view_to_screen = g.view_to_screen(&o);
+        let (w, h, xs, ys) = (o.xres as f32, o.yres as f32, o.xsamples, o.ysamples);
+
+        self.vertices.par_iter().for_each(|vertex| {
+            // Transform object coordinates to NDC coordinates
+            let p1 = super::map_to_space(&view_to_screen, vertex.p);
+            let r1 = Vec2::new((p1.x + 1.) * 0.5 * w, (1. - p1.y) * 0.5 * h);
+
+            // Don't render tris outside of the screen.
+            if r1.x < 0. || r1.x > w || r1.y < 0. || r1.y > h {
+                return;
+            }
+
+            let sample = s.get((xs * r1.x.floor() as usize, ys * r1.y.floor() as usize));
+            let Some(sample) = sample else { return; };
+            let hit_info = super::Sample {
+                depth: p1.z,
+                color: vertex.c,
+                opacity: vertex.o * ((xs * ys) as f32),
+            };
+            sample.depths.lock().unwrap().push(hit_info);
         });
     }
 
     pub fn sample(&mut self, g: &GraphicsState, o: &Options) {
-        let s = &mut SAMPLE_BUF.lock().unwrap();
-        let s = s.as_mut().unwrap();
+        let s = &SAMPLE_BUF.lock().unwrap();
+        let s = s.as_ref().unwrap();
         let view_to_screen = g.view_to_screen(&o);
         let (w, h, xs, ys) = (o.xres as f32, o.yres as f32, o.xsamples, o.ysamples);
 
-        for u in 0..self.w {
-            for v in 0..self.h {
-                let v_tl: &Vertex = self.get_vertex(u, v);
-                let v_tr: &Vertex = self.get_vertex(u + 1, v);
-                let v_bl: &Vertex = self.get_vertex(u, v + 1);
-                let v_br: &Vertex = self.get_vertex(u + 1, v + 1);
+        (0..(self.w * self.h)).into_par_iter().for_each(|i| {
+            let u = i % self.w;
+            let v = (i - u) / self.h;
 
-                let (tri1, tri2) = (
-                    Triangle::new(v_tl, v_tr, v_bl),
-                    Triangle::new(v_bl, v_tr, v_br),
-                );
+            let v_tl: &Vertex = self.get_vertex(u, v);
+            let v_tr: &Vertex = self.get_vertex(u + 1, v);
+            let v_bl: &Vertex = self.get_vertex(u, v + 1);
+            let v_br: &Vertex = self.get_vertex(u + 1, v + 1);
 
-                let z_tl = v_tl.p.z;
-                let z_tr = v_tr.p.z;
-                let z_bl = v_bl.p.z;
-                let z_br = v_br.p.z;
+            let (tri1, tri2) = (
+                Triangle::new(v_tl, v_tr, v_bl),
+                Triangle::new(v_bl, v_tr, v_br),
+            );
 
-                if z_tl.min(z_tr.min(z_bl)) > 0.1 {
-                    tri1.rasterize(&view_to_screen, s, w, h, xs, ys);
-                }
+            let z_tl = v_tl.p.z;
+            let z_tr = v_tr.p.z;
+            let z_bl = v_bl.p.z;
+            let z_br = v_br.p.z;
 
-                if z_bl.min(z_tl.min(z_br)) > 0.1 {
-                    tri2.rasterize(&view_to_screen, s, w, h, xs, ys);
-                }
+            // println!("{}", v_tl.p);
+
+            if z_tl.min(z_tr.min(z_bl)) > 0.5 {
+                tri1.rasterize(&view_to_screen, &s, w, h, xs, ys);
             }
-        }
+
+            if z_bl.min(z_tl.min(z_br)) > 0.5 {
+                tri2.rasterize(&view_to_screen, &s, w, h, xs, ys);
+            }
+        });
     }
 }

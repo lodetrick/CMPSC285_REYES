@@ -109,6 +109,7 @@ where
 
     grid.displace(&g);
     grid.shade(&g);
+	// grid.splat(&g, &o);
     grid.sample(&g, &o);
 }
 
