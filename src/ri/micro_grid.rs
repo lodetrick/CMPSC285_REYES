@@ -66,7 +66,8 @@ impl MicroGrid {
         self.renormalize();
     }
 
-    fn renormalize(&mut self) {
+    pub fn renormalize(&mut self) {
+        let mut sum_missed = 0;
         for u in 0..=self.w {
             for v in 0..=self.h {
                 let dPdu = if u == self.w {
@@ -83,11 +84,15 @@ impl MicroGrid {
 
                 let vertex = self.get_vertex_mut(u, v);
                 let cross = dPdu.cross(dPdv);
-                // if dPdu.abs_diff_eq(Vec3::ZERO, f32::EPSILON) || dPdv.abs_diff_eq(Vec3::ZERO, f32::EPSILON) {
-                vertex.ng = cross.normalize();
-                // }
+                if dPdu.abs_diff_eq(Vec3::ZERO, f32::EPSILON) || dPdv.abs_diff_eq(Vec3::ZERO, f32::EPSILON) {
+                    sum_missed += 1;
+                } else {
+                    vertex.ng = cross.normalize();
+                }
             }
         }
+
+        println!("Renormalized, skipped [{sum_missed} / {}] vertices", self.vertices.len());
     }
 
     fn flip_normals(&mut self) {
@@ -132,10 +137,10 @@ impl MicroGrid {
             }
 
             // vertex.c = glam::Vec3Swizzles::zzz(vertex.p) / 30.0;
-            // vertex.c = shader_context.Ci;
-            // vertex.o = shader_context.Oi;
-            vertex.c = (shader_context.N + Vec3::ONE) * 0.5;
-            vertex.o = Vec3::ONE;
+            vertex.c = shader_context.Ci;
+            vertex.o = shader_context.Oi;
+            // vertex.c = (shader_context.N + Vec3::ONE) * 0.5;
+            // vertex.o = Vec3::ONE;
         });
     }
 
@@ -156,9 +161,12 @@ impl MicroGrid {
             }
 
             let sample = s.get((xs * r1.x.floor() as usize, ys * r1.y.floor() as usize));
-            let Some(sample) = sample else { return; };
+            let Some(sample) = sample else {
+                return;
+            };
+
             let hit_info = super::Sample {
-                depth: p1.z,
+                depth: vertex.p.z,
                 color: vertex.c,
                 opacity: vertex.o * ((xs * ys) as f32),
             };
@@ -190,8 +198,6 @@ impl MicroGrid {
             let z_tr = v_tr.p.z;
             let z_bl = v_bl.p.z;
             let z_br = v_br.p.z;
-
-            // println!("{}", v_tl.p);
 
             if z_tl.min(z_tr.min(z_bl)) > 0.5 {
                 tri1.rasterize(&view_to_screen, &s, w, h, xs, ys);
