@@ -56,9 +56,9 @@ impl Dicer {
         self.y_max = self.y_max.max(p.y);
     }
 
-	fn clip_primitive(&self) -> bool {
-		self.x_max < 0.0 || self.x_min > self.w || self.y_max < 0.0 || self.y_min > self.h
-	}
+    fn clip_primitive(&self) -> bool {
+        self.x_max < 0.0 || self.x_min > self.w || self.y_max < 0.0 || self.y_min > self.h
+    }
 
     fn get_dice_rate(&self, clamp_min: usize, clamp_max: usize) -> (usize, usize) {
         let diag = Vec2::new(self.x_max - self.x_min, self.y_max - self.y_min).length();
@@ -109,7 +109,7 @@ where
 
     grid.displace(&g);
     grid.shade(&g);
-	// grid.splat(&g, &o);
+    // grid.splat(&g, &o);
     grid.sample(&g, &o);
 }
 
@@ -155,9 +155,9 @@ pub extern "C" fn RiSphere(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thetam
         let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
         add_bounding_points!(dicer, radius, -radius, radius, -radius, zmax, zmin);
 
-		if dicer.clip_primitive() {
-			return; // Drop out-of-bounds primitive
-		}
+        if dicer.clip_primitive() {
+            return; // Drop out-of-bounds primitive
+        }
 
         dicer.get_dice_rate(4, DICE_MAX)
     };
@@ -180,9 +180,9 @@ pub extern "C" fn RiCylinder(radius: RtFloat, zmin: RtFloat, zmax: RtFloat, thet
         let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
         add_bounding_points!(dicer, radius, -radius, radius, -radius, zmax, zmin);
 
-		if dicer.clip_primitive() {
-			return; // Drop out-of-bounds primitive
-		}
+        if dicer.clip_primitive() {
+            return; // Drop out-of-bounds primitive
+        }
 
         dicer.get_dice_rate(4, DICE_MAX)
     };
@@ -217,9 +217,9 @@ pub extern "C" fn RiCone(height: RtFloat, radius: RtFloat, theta_max: RtFloat) {
         let mut dicer = Dicer::new(g.object_to_screen(&o), o.xres as f32, o.yres as f32);
         add_bounding_points!(dicer, radius, -radius, radius, -radius, height, 0.0);
 
-		if dicer.clip_primitive() {
-			return; // Drop out-of-bounds primitive
-		}
+        if dicer.clip_primitive() {
+            return; // Drop out-of-bounds primitive
+        }
 
         dicer.get_dice_rate(4, DICE_MAX)
     };
@@ -268,9 +268,9 @@ pub extern "C" fn RiTorus(
             -minorradius
         );
 
-		if dicer.clip_primitive() {
-			return; // Drop out-of-bounds primitive
-		}
+        if dicer.clip_primitive() {
+            return; // Drop out-of-bounds primitive
+        }
 
         dicer.get_dice_rate(4, DICE_MAX)
     };
@@ -316,43 +316,35 @@ fn render_tri(
         P[verts[2] as usize],
     );
 
-    // let Some(N) = N else {
-    //     return;
-    // };
-    // let (n0, n1, n2) = (
-    //     N[verts[0] as usize],
-    //     N[verts[1] as usize],
-    //     N[verts[2] as usize],
-    // );
+	let n_fn: Box<dyn Fn(f32, f32) -> Vec3> = if let Some(N) = N {
+		let (n0, n1, n2) = (
+			N[verts[0] as usize],
+			N[verts[1] as usize],
+			N[verts[2] as usize],
+		);
 
-    // let st_fn: dyn Fn(f32, f32) -> Vec2 = if let Some(st) = st {
-    //     let (st0, st1, st2) = (
-    //         Vec2::new(st[verts[0] as usize], st[verts[0] as usize + 1]),
-    //         Vec2::new(st[verts[1] as usize], st[verts[1] as usize + 1]),
-    //         Vec2::new(st[verts[2] as usize], st[verts[2] as usize + 1]),
-    //     );
-    //     |u, v| -> Vec2 { (1.0 - v) * ((1.0 - u) * st0 + u * st1) + v * st2 }
-    // } else {
-    //     uv_identity
-    // };
+		Box::new(move |u, v| -> Vec3 { (1.0 - v) * ((1.0 - u) * n0 + u * n1) + v * n2 })
+	} else {
+		let n = -((p0 - p1).cross(p0 - p2)).normalize();
+		Box::new(move |_, _| -> Vec3 { n })
+	};
 
-    // let Some(st) = st else {
-    //     return;
-    // };
-
-    // let (st0, st1, st2) = (
-    //     Vec2::new(st[2 * verts[0] as usize], st[2 * verts[0] as usize + 1]),
-    //     Vec2::new(st[2 * verts[1] as usize], st[2 * verts[1] as usize + 1]),
-    //     Vec2::new(st[2 * verts[2] as usize], st[2 * verts[2] as usize + 1]),
-    // );
+	let st_fn : Box<dyn Fn(f32, f32) -> Vec2> = if let Some(st) = st {
+		    let (st0, st1, st2) = (
+		        Vec2::new(st[2 * verts[0] as usize], st[2 * verts[0] as usize + 1]),
+		        Vec2::new(st[2 * verts[1] as usize], st[2 * verts[1] as usize + 1]),
+		        Vec2::new(st[2 * verts[2] as usize], st[2 * verts[2] as usize + 1]),
+		    );
+		    Box::new(move |u, v| -> Vec2 { (1.0 - v) * ((1.0 - u) * st0 + u * st1) + v * st2 })
+	} else {
+		Box::new(|u, v| Vec2::new(u, v))
+	};
 
     render_primitive(
         dice_amount,
         |u, v| -> Vec3 { (1.0 - v) * ((1.0 - u) * p0 + u * p1) + v * p2 },
-        |u, v| -> Vec3 { Vec3::new(0., 0., -1.) },
-        // |u, v| -> Vec3 { (1.0 - v) * ((1.0 - u) * n0 + u * n1) + v * n2 },
-        uv_identity,
-        // |u, v| -> Vec2 { (1.0 - v) * ((1.0 - u) * st0 + u * st1) + v * st2 },
+        n_fn,
+		st_fn,
     );
 }
 
@@ -370,28 +362,39 @@ fn render_quad(
         P[verts[3] as usize],
     );
 
-    // let Some(st) = st else {
-    //     return;
-    // };
+	let n_fn: Box<dyn Fn(f32, f32) -> Vec3> = if let Some(N) = N {
+		let (n0, n1, n2, n3) = (
+			N[verts[0] as usize],
+			N[verts[1] as usize],
+			N[verts[2] as usize],
+			N[verts[3] as usize],
+		);
 
-    // let (st0, st1, st2, st3) = (
-    //     Vec2::new(st[2 * verts[0] as usize], st[2 * verts[0] as usize + 1]),
-    //     Vec2::new(st[2 * verts[1] as usize], st[2 * verts[1] as usize + 1]),
-    //     Vec2::new(st[2 * verts[2] as usize], st[2 * verts[2] as usize + 1]),
-    //     Vec2::new(st[2 * verts[3] as usize], st[2 * verts[3] as usize + 1]),
-    // );
+		Box::new(move |u, v| -> Vec3 { (1.0 - u) * (1.0 - v) * n0 + u * (1.0 - v) * n1 + (1.0 - u) * v * n3 + u * v * n2 })
+	} else {
+		let n = -((p0 - p1).cross(p0 - p2)).normalize();
+		Box::new(move |_, _| -> Vec3 { n })
+	};
+
+	let st_fn : Box<dyn Fn(f32, f32) -> Vec2> = if let Some(st) = st {
+		    let (st0, st1, st2, st3) = (
+		        Vec2::new(st[2 * verts[0] as usize], st[2 * verts[0] as usize + 1]),
+		        Vec2::new(st[2 * verts[1] as usize], st[2 * verts[1] as usize + 1]),
+		        Vec2::new(st[2 * verts[2] as usize], st[2 * verts[2] as usize + 1]),
+		        Vec2::new(st[2 * verts[3] as usize], st[2 * verts[3] as usize + 1]),
+		    );
+		    Box::new(move |u, v| -> Vec2 { (1.0 - u) * (1.0 - v) * st0 + u * (1.0 - v) * st1 + (1.0 - u) * v * st3 + u * v * st2 })
+	} else {
+		Box::new(|u, v| Vec2::new(u, v))
+	};
 
     render_primitive(
         dice_amount,
         |u, v| -> Vec3 {
             (1.0 - u) * (1.0 - v) * p0 + u * (1.0 - v) * p1 + (1.0 - u) * v * p3 + u * v * p2
         },
-        |u, v| -> Vec3 { Vec3::new(0., 0., -1.) },
-        // |u, v| -> Vec3 { (1.0 - v) * ((1.0 - u) * n0 + u * n1) + v * n2 },
-        uv_identity,
-        // |u, v| -> Vec2 {
-        //     (1.0 - u) * (1.0 - v) * st0 + u * (1.0 - v) * st1 + (1.0 - u) * v * st3 + u * v * st2
-        // },
+		n_fn,
+		st_fn,
     );
 }
 
@@ -435,14 +438,14 @@ pub unsafe extern "C" fn RiPointsPolygons(
 
     let mut tri_begin: usize = 0;
 
-	let mut start = Instant::now();
+    let mut start = Instant::now();
     for (i, nverts_) in nverts.iter().enumerate() {
-        println!("Rendering Polygon [{} / {}]", i + 1, nverts.len());
 		if i % 100 == 0 {
-			let end = Instant::now() - start;
-			start = Instant::now();
-			println!("100 polygons took {:#?}", end);
-		}
+			println!("Rendering Polygon [{} / {}]", i + 1, nverts.len());
+            let end = Instant::now() - start;
+            start = Instant::now();
+            println!("100 polygons took {:#?}", end);
+        }
         let nverts = *nverts_ as usize;
 
         if nverts == 3 {
@@ -452,9 +455,9 @@ pub unsafe extern "C" fn RiPointsPolygons(
                     dicer.add_point(P[*vert as usize]);
                 }
 
-				if dicer.clip_primitive() {
-					continue; // Drop out-of-bounds primitive
-				}
+                if dicer.clip_primitive() {
+                    continue; // Drop out-of-bounds primitive
+                }
 
                 dicer.get_dice_rate(2, DICE_MAX)
             };
@@ -473,9 +476,9 @@ pub unsafe extern "C" fn RiPointsPolygons(
                     dicer.add_point(P[*vert as usize]);
                 }
 
-				if dicer.clip_primitive() {
-					continue; // Drop out-of-bounds primitive
-				}
+                if dicer.clip_primitive() {
+                    continue; // Drop out-of-bounds primitive
+                }
 
                 dicer.get_dice_rate(2, DICE_MAX)
             };
