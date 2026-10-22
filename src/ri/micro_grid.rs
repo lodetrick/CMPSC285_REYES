@@ -1,10 +1,11 @@
 use std::{ffi::c_void, ptr};
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use rayon::prelude::*;
 
 use crate::ri::{GraphicsState, Options, RtShaderContext, Triangle, Vertex, SAMPLE_BUF};
 
+// Data structure for the micropolygon grid. It handles vertex displacement, shading, and creating triangles to be sampled.
 pub struct MicroGrid {
     vertices: Vec<Vertex>,
     w: usize,
@@ -66,8 +67,7 @@ impl MicroGrid {
         self.renormalize();
     }
 
-    pub fn renormalize(&mut self) {
-        let mut sum_missed = 0;
+    fn renormalize(&mut self) {
         for u in 0..=self.w {
             for v in 0..=self.h {
                 let dPdu = if u == self.w {
@@ -84,15 +84,11 @@ impl MicroGrid {
 
                 let vertex = self.get_vertex_mut(u, v);
                 let cross = dPdu.cross(dPdv);
-                if dPdu.abs_diff_eq(Vec3::ZERO, f32::EPSILON) || dPdv.abs_diff_eq(Vec3::ZERO, f32::EPSILON) {
-                    sum_missed += 1;
-                } else {
+                if !(dPdu.abs_diff_eq(Vec3::ZERO, f32::EPSILON) || dPdv.abs_diff_eq(Vec3::ZERO, f32::EPSILON)) {
                     vertex.ng = cross.normalize();
                 }
             }
         }
-
-        println!("Renormalized, skipped [{sum_missed} / {}] vertices", self.vertices.len());
     }
 
     fn flip_normals(&mut self) {
@@ -182,7 +178,7 @@ impl MicroGrid {
 
         (0..(self.w * self.h)).into_par_iter().for_each(|i| {
             let u = i % self.w;
-            let v = (i - u) / self.h;
+            let v = (i - u) / self.w;
 
             let v_tl: &Vertex = self.get_vertex(u, v);
             let v_tr: &Vertex = self.get_vertex(u + 1, v);

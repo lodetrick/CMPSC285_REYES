@@ -1,11 +1,7 @@
 //! TODO:
 //!
-//! 2. SimpleAnimation not rendering
-//! 4. Normals seem to be off now...
-//! 6. Lights coming from weird positions - partially solved
-//! 7. Extra Credit Ideas?
+//! 1. Polygon Fanning
 //! 8. Original Scene?
-//! 10. Perspective-Correct Interpolating
 //!
 
 //! ri.rs: the HW1 RenderMan-like interface (include/Ri.h) in Rust, and the
@@ -74,6 +70,7 @@ enum Projection {
     Perspective { fov: f32 },
 }
 
+// The basic vertex struct, this is used by triangles and the micropolygon grid, and created in primitives.rs
 #[derive(Clone)]
 struct Vertex {
     p: Vec3,
@@ -110,6 +107,7 @@ impl<'a> Triangle<'a> {
         Triangle { v1, v2, v3 }
     }
 
+    // Actually render the triangle onto the samples.
     fn rasterize(
         &self,
         view_to_screen: &RtMatrix,
@@ -139,13 +137,9 @@ impl<'a> Triangle<'a> {
             r1.y.min(r2.y.min(r3.y)),
             r1.y.max(r2.y.max(r3.y)),
         );
-        // println!("{x_min} {x_max} {y_min} {y_max} ({} {} {})", self.v1.p, p1, r1);
-        // println!("{x_min} {x_max} {y_min} {y_max} ({} {} {})", self.v2.p, p2, r2);
-        // println!("{x_min} {x_max} {y_min} {y_max} ({} {} {})", self.v3.p, p3, r3);
 
         // Don't render tris outside of the screen.
         if x_max < 0. || x_min > w || y_max < 0. || y_min > h {
-            // println!("Out of clip space");
             return;
         }
 
@@ -169,7 +163,7 @@ impl<'a> Triangle<'a> {
                             unreachable!();
                         };
 
-                        // Generate the position of the pixel (0.5 jitter to start)
+                        // Generate the position of the sample to bounds-check
                         let r = pixel_base
                             + Vec2::new(
                                 (s_i as f32 + sample.jitter.x) / (xsamples as f32),
@@ -188,6 +182,7 @@ impl<'a> Triangle<'a> {
                             (r - r1).perp_dot(r1 - r2) / tri_area,
                         );
 
+                        // bounds check
                         if 0. <= w1 && w1 < 1. && 0. <= w2 && w2 < 1. && 0. <= w3 && w3 < 1. {
                             let hit_info = Sample {
                                 depth: barycentric(w2, w3, self.v1.p.z, self.v2.p.z, self.v3.p.z),
@@ -311,6 +306,7 @@ struct GraphicsState {
     displace_params: Option<Arc<[u8]>>,
 }
 
+// Functions for generating various transformations between spaces.
 impl GraphicsState {
     const fn default() -> Self {
         GraphicsState {
@@ -399,6 +395,7 @@ unsafe fn token(s: *const c_char) -> &'static str {
     }
 }
 
+// Sample struct to hold information for a rasterizer hit at a sample.
 #[derive(Clone)]
 struct Sample {
     depth: RtFloat,
@@ -416,6 +413,7 @@ impl Sample {
     }
 }
 
+// Struct to store the jitter for a given sample, and store the truncated depth samples for transparency.
 struct SampleGroup {
     jitter: Vec2,
     depths: Mutex<Vec<Sample>>,
@@ -430,13 +428,8 @@ impl SampleGroup {
     }
 }
 
+// Buffers for both the samples and the textures.
 static SAMPLE_BUF: Mutex<Option<Array2<SampleGroup>>> = Mutex::new(None);
-
-#[inline]
-fn get_samples_index(x: usize, y: usize, w: usize) -> usize {
-    x + y * w
-}
-
 static TEXTURE_BUF: Mutex<[Option<DynamicImage>; 8]> = Mutex::new([const { None }; 8]);
 
 /* ---------------------------------------------------------- graphics state */
@@ -519,7 +512,7 @@ pub extern "C" fn RiWorldBegin() {
     let mut r = rand::rngs::SmallRng::seed_from_u64(42);
     *SAMPLE_BUF.lock().unwrap() = Some(Array2::from_shape_fn(
         (w * o.xsamples, h * o.ysamples),
-        |(u, v)| -> SampleGroup {
+        |(_, _)| -> SampleGroup {
             SampleGroup {
                 jitter: Vec2::new(r.random_range(0.0..=1.0), r.random_range(0.0..=1.0)),
                 depths: Mutex::new(Vec::new()),
@@ -579,6 +572,7 @@ pub extern "C" fn RiWorldEnd() {
             for y in 0..h {
                 let pos = (x * xsamples, y * ysamples);
 
+                // Collapse all the samples within a pixel
                 let mut color = Vec3::ZERO;
                 let mut opacity = Vec3::ZERO;
                 for i in 0..xsamples {
@@ -588,6 +582,7 @@ pub extern "C" fn RiWorldEnd() {
                             unreachable!();
                         };
 
+                        // Calculate the transparency impacts.
                         let mut sample_color = Vec3::ZERO;
                         let mut sample_opacity = Vec3::ZERO;
                         for hit in sample.depths.lock().unwrap().iter() {

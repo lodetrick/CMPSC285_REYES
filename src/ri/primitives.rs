@@ -1,4 +1,5 @@
 use core::slice;
+use std::time::Instant;
 
 use crate::ri::{
     map_to_space, micro_grid::MicroGrid, RtFloat, RtInt, RtMatrix, RtNormal, RtPoint, G_STATE,
@@ -23,6 +24,7 @@ macro_rules! add_bounding_points {
     };
 }
 
+// Calculates the dicing rate for the given object-space points.
 struct Dicer {
     x_min: f32,
     x_max: f32,
@@ -63,7 +65,7 @@ impl Dicer {
     fn get_dice_rate(&self, clamp_min: usize, clamp_max: usize) -> (usize, usize) {
         let diag = Vec2::new(self.x_max - self.x_min, self.y_max - self.y_min).length();
         let n = ((2.0 * diag).round() as usize).clamp(clamp_min, clamp_max);
-        println!("Dice rate: {n} ({diag})");
+        // println!("Dice rate: {n} ({diag})");
         (n, n)
     }
 }
@@ -72,6 +74,7 @@ fn uv_identity(u: f32, v: f32) -> Vec2 {
     Vec2::new(u, v)
 }
 
+// The basic function that creates a micropolygon grid and renders it, given parametric functions for object-position, normal, and texture coordinates.
 fn render_primitive<F1, F2, F3>((umax, vmax): (usize, usize), pos_fn: F1, norm_fn: F2, st_fn: F3)
 where
     F1: Fn(f32, f32) -> Vec3,
@@ -456,6 +459,7 @@ pub unsafe extern "C" fn RiPointsPolygons(
                 }
 
                 if dicer.clip_primitive() {
+					tri_begin += nverts;
                     continue; // Drop out-of-bounds primitive
                 }
 
@@ -477,6 +481,7 @@ pub unsafe extern "C" fn RiPointsPolygons(
                 }
 
                 if dicer.clip_primitive() {
+					tri_begin += nverts;
                     continue; // Drop out-of-bounds primitive
                 }
 
@@ -490,7 +495,9 @@ pub unsafe extern "C" fn RiPointsPolygons(
                 &N,
                 &st,
             );
-        }
+        } else {
+			println!("sad sad");
+		}
 
         tri_begin += nverts;
     }
