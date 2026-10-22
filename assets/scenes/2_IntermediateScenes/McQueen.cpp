@@ -106,9 +106,9 @@ void McQueen(void)
         RiFrameBegin(0);
             RiProjection(RI_PERSPECTIVE, "fov", &fov);
             RiConcatTransform(CAMERA);
-            RiMakeTexture("models/mcqueen/McQueenLivery.jpg", 0);
-            RiMakeTexture("models/mcqueen/Eyes_McQueen_Eyes.jpg", 1);
-            RiMakeTexture("models/mcqueen/McQ_Tires.png", 2);
+            RiMakeTexture("assets/models/mcqueen/McQueenLivery.jpg", 0);
+            RiMakeTexture("assets/models/mcqueen/Eyes_McQueen_Eyes.jpg", 1);
+            RiMakeTexture("assets/models/mcqueen/McQ_Tires.png", 2);
             RiWorldBegin();
                 RiOpacity(opaque);
 
@@ -117,7 +117,7 @@ void McQueen(void)
                 RiSurface(CHECKERBOARD, &cp, sizeof cp);
                 Floor();
 
-                ObjMesh *car = obj_load("models/mcqueen/mcqueen.obj");
+                ObjMesh *car = obj_load("assets/models/mcqueen/mcqueen.obj");
                 DrawCar(car);
 
                 /* its mirror image under the floor */

@@ -61,7 +61,7 @@ void Buzz(void)
         RiFrameBegin(0);
             RiProjection(RI_PERSPECTIVE, "fov", &fov);
             RiConcatTransform(CAMERA);
-            RiMakeTexture("models/buzz/Buzz_Diffuse.png", 0);
+            RiMakeTexture("assets/models/buzz/Buzz_Diffuse.png", 0);
             RiWorldBegin();
                 RiOpacity(opaque);
 
@@ -70,7 +70,7 @@ void Buzz(void)
                 RiSurface(CHECKERBOARD, &cp, sizeof cp);
                 Floor(24, 0.5, CAMERA); /* 0.5 m tiles over x, z in [-6, 6] */
 
-                ObjMesh *buzz = obj_load("models/buzz/buzz.obj");
+                ObjMesh *buzz = obj_load("assets/models/buzz/buzz.obj");
                 DrawBuzz(buzz);
 
                 /* his mirror image under the floor */

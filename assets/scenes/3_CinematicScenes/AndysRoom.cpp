@@ -425,7 +425,7 @@ void HelmetGlass(RtShaderContext *c)
 void BuzzModel(void)
 {
     RtColor white = {1, 1, 1}, opaque = {1, 1, 1};
-    ObjMesh *buzz = obj_load("models/buzz/buzz.obj");
+    ObjMesh *buzz = obj_load("assets/models/buzz/buzz.obj");
     TextureParams tp = {0, &KEY_SHADOW};
     for (int k = 0; buzz && k < buzz->ngroups; ++k) {
         const ObjGroup &g = buzz->groups[k];
@@ -469,7 +469,7 @@ void WoodyModel(void)
     };
     RtColor opaque = {1, 1, 1};
     RiOpacity(opaque);
-    ObjMesh *woody = obj_load("models/woody/woody.obj");
+    ObjMesh *woody = obj_load("assets/models/woody/woody.obj");
     for (int k = 0; woody && k < woody->ngroups; ++k) {
         const ObjGroup &g = woody->groups[k];
         if (std::strcmp(g.material, "band") == 0) {
@@ -595,14 +595,14 @@ void AndysRoom(void)
     KEY_SHADOW.map = NULL;
 
     RiBegin(RI_NULL);
-        RiMakeTexture("models/buzz/Buzz_Diffuse.png", 0);
-        RiMakeTexture("models/buzz/buzz_forcefeild.png", 1);
-        RiMakeTexture("models/woody/woody_head.jpg", 2);
-        RiMakeTexture("models/woody/woody_clothes.jpg", 3);
-        RiMakeTexture("models/woody/woody_leather.jpg", 4);
-        RiMakeTexture("models/woody/woody_bandana.jpg", 5);
-        RiMakeTexture("models/woody/woody_eyes.png", 6);
-        RiMakeTexture("models/woody/woody_band_mask.png", 7);
+        RiMakeTexture("assets/models/buzz/Buzz_Diffuse.png", 0);
+        RiMakeTexture("assets/models/buzz/buzz_forcefeild.png", 1);
+        RiMakeTexture("assets/models/woody/woody_head.jpg", 2);
+        RiMakeTexture("assets/models/woody/woody_clothes.jpg", 3);
+        RiMakeTexture("assets/models/woody/woody_leather.jpg", 4);
+        RiMakeTexture("assets/models/woody/woody_bandana.jpg", 5);
+        RiMakeTexture("assets/models/woody/woody_eyes.png", 6);
+        RiMakeTexture("assets/models/woody/woody_band_mask.png", 7);
 
         /* pass 1: the toys' depth, seen from the key light */
         RiFrameBegin(0);

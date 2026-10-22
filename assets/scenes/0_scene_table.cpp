@@ -28,6 +28,8 @@ void TransparencyTest(void);
 void TransparencyOrder(void);
 void PolygonTest(void);
 void ShadowTest(void);
+void NormalTest(void);
+void CustomScene(void);
 
 /* 2_IntermediateScenes/ */
 void Rocket(void);
@@ -90,5 +92,7 @@ extern "C" const RtSceneEntry RI_SCENES[] = {
     {"RadiatorSprings", RadiatorSprings, "cinematic"},
     {"AndysRoom", AndysRoom, "cinematic"},
     {"WallEMovie", WallEMovie, "cinematic"},
+    {"NormalTest", NormalTest, "test"},
+    {"Custom", CustomScene, ""},
     {NULL, NULL, NULL}
 };

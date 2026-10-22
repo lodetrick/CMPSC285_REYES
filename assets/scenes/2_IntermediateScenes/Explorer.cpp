@@ -40,9 +40,9 @@ void Explorer(void)
     RiDisplay("2_IntermediateScenes/Explorer.png", "", "");
     RiFrameBegin(0);
         RiProjection(RI_PERSPECTIVE, "fov", &fov);
-        RiMakeTexture("stars.png", 0);
-        RiMakeTexture("gasgiant.png", 1);
-        RiMakeTexture("moon.png", 2);
+        RiMakeTexture("assets/textures/stars.png", 0);
+        RiMakeTexture("assets/textures/gasgiant.png", 1);
+        RiMakeTexture("assets/textures/moon.png", 2);
         RiWorldBegin();
             /* Sky: a curved backdrop behind everything, made of six arcs of a
              * cylinder 600 m in radius, its axis upright 750 m ahead, so its

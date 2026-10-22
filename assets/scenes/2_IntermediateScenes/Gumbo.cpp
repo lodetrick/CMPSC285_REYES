@@ -190,7 +190,7 @@ void Gumbo(void)
     KEY_SHADOW.light = 0;
     KEY_SHADOW.map = NULL;
 
-    ObjMesh *gumbo = obj_load("models/gumbo/gumbo.obj");
+    ObjMesh *gumbo = obj_load("assets/models/gumbo/gumbo.obj");
 
     RiBegin(RI_NULL);
         /* pass 1: depth seen from the key light */

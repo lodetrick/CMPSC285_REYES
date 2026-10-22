@@ -531,7 +531,7 @@ void ShaderTest()
 				RiTransformBegin();
 					opacity[0] = 1; opacity[1] = 1; opacity[2] = 1;
 					RiOpacity(opacity);
-					RiMakeTexture("earth.jpg", 0);
+					RiMakeTexture("assets/textures/earth.jpg", 0);
 					RtShaderFn earthShader = TextureMap0;
 					RiSurface(earthShader, NULL, 0);
 					BumpParams bp1 = { 0.3f, 2, 6 };
@@ -594,7 +594,7 @@ void UVTest(void)
         RiFrameBegin(0);
             RiProjection(RI_PERSPECTIVE, "fov", &fov);
             RiWorldBegin();
-                RiMakeTexture("uvtest.png", 0);
+                RiMakeTexture("assets/textures/uvtest.png", 0);
                 RiSurface(UnlitTexture, &label, sizeof label);
                 RiOpacity(opaque);
 
@@ -641,7 +641,7 @@ void Earth()
 
 			RiWorldBegin();
 				RiTransformBegin();
-					RiMakeTexture("earth.jpg", 0);
+					RiMakeTexture("assets/textures/earth.jpg", 0);
 					RtShaderFn earthShader = TextureMap0;
 					RiSurface(earthShader, NULL, 0);
 					RtColor blue = { 0, 0, 1 };
@@ -1218,7 +1218,7 @@ void PolygonTest(void)
                 RiOpacity(opaque);
 
                 /* 1 and 2: one quad, and the same quad as two triangles */
-                RiMakeTexture("uvtest.png", 0);
+                RiMakeTexture("assets/textures/uvtest.png", 0);
                 RiSurface(UnlitTexture, &label, sizeof label);
                 Quad(-3.4f, 1.6f, -1.9f, 3.1f, 10, 0);
                 Quad(-1.7f, 1.6f, -0.2f, 3.1f, 10, 1);

@@ -47,6 +47,7 @@ void CONSTANT(RtShaderContext *c);     /* surface: the color, unlit (Ci = Cs, Oi
 void STANDARD(RtShaderContext *c);     /* surface: ambient + diffuse + Phong */
 void CHECKERBOARD(RtShaderContext *c); /* surface, CheckerParams */
 void BUMPY(RtShaderContext *c);        /* displacement, BumpParams */
+void GROUND_SURFACE(RtShaderContext *c);
 
 /* Ken Perlin's improved noise (2002) at (x, y, z): smooth, signed, about
  * [-1, 1], zero at integer coordinates, with features about one unit

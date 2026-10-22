@@ -566,12 +566,12 @@ void RadiatorSprings(void)
     LookAt(sunEye, SUN_VIEW_CENTER, sunCamera);
     const RtFloat toWindow = (RtFloat)(1 / SUN_VIEW_HALF_WIDTH); /* the window is [-1, 1] */
 
-    ObjMesh *car = obj_load("models/mcqueen/mcqueen.obj");
+    ObjMesh *car = obj_load("assets/models/mcqueen/mcqueen.obj");
 
     RiBegin(RI_NULL);
-        RiMakeTexture("models/mcqueen/McQueenLivery.jpg", 0);
-        RiMakeTexture("models/mcqueen/Eyes_McQueen_Eyes.jpg", 1);
-        RiMakeTexture("models/mcqueen/McQ_Tires.png", 2);
+        RiMakeTexture("assets/models/mcqueen/McQueenLivery.jpg", 0);
+        RiMakeTexture("assets/models/mcqueen/Eyes_McQueen_Eyes.jpg", 1);
+        RiMakeTexture("assets/models/mcqueen/McQ_Tires.png", 2);
 
         /* pass 1: compute shadow map of everything on ground from sun */
         RiFrameBegin(0);
